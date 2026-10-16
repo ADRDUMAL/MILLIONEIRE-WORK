@@ -1696,3 +1696,73 @@ body.gd-open { overflow: hidden; }
   .resume-text b { font-size: 21px; }
   .topbar-title h1 { font-size: 24px; }
 }
+
+/* ---------- Toque e leitura (auditoria 16/10/2026) ----------
+   Alvos de toque com pelo menos 40px sem mudar o desenho: a área cresce por padding e margem negativa,
+   ou por um ::before transparente. Texto mono nunca abaixo de 11.5px. */
+.lx-links a, .lx-login { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; margin: 0 -4px; }
+.lx-foot a, .lx-foot span { display: inline-flex; align-items: center; min-height: 40px; }
+.lx-readout dt, .lx-finder-cap, .lx-row-tags em, .lx-thead, .lx-more { font-size: 11.5px; }
+.lx-sector-cap { font-size: 11.5px; }
+.link, .pcard-link { position: relative; min-height: 24px; }
+.link::before, .pcard-link::before, .tag button::before, .hotspot::before { content: ""; position: absolute; inset: -10px -8px; }
+.tag button { position: relative; width: 22px; height: 22px; align-items: center; justify-content: center; }
+.hotspot { position: relative; width: 32px; height: 32px; }
+.hotspot-dot { width: 32px; height: 32px; font-size: 13px; }
+.hotspot-card { left: 40px; }
+.has-shell .section-head .link { min-height: 40px; padding: 0 2px; }
+.tags { gap: 8px; }
+.brand { min-height: 44px; }
+
+/* ---------- Scanner guiado: faixa de ângulos, alternadores e mapa de cobertura (16/10/2026) ----------
+   A faixa é o elemento principal da captura: um segmento por setor da volta atual, preenchido quando há
+   foto, com a posição atual (bússola) marcada. Fica logo abaixo do quadro, onde o olho já está. */
+.gd-strip { position: absolute; left: 12%; right: 12%; top: calc(73% + 14px); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.gd-strip-row { position: relative; display: flex; gap: 3px; height: 10px; }
+.gd-strip-row i { flex: 1; border-radius: 2px; background: rgba(255, 255, 255, 0.28); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); transition: background var(--t-state) var(--ease), transform var(--t-state) var(--ease); }
+.gd-strip-row i.is-on { background: var(--color-lime-500); }
+.gd-strip-row i.is-near { background: rgba(184, 243, 107, 0.45); }
+.gd-strip-row i.is-gap { background: #FFD27A; }
+.gd-strip-here { position: absolute; top: -5px; width: 3px; height: 20px; margin-left: -1.5px; border-radius: 2px; background: #fff; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.45); transition: left 180ms var(--ease); }
+.gd-strip-here[hidden] { display: none; }
+.gd-strip-text { display: flex; justify-content: space-between; gap: 12px; font: 600 11.5px/1.2 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255, 255, 255, 0.85); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); }
+.gd-strip-text b { color: var(--color-lime-500); }
+.gd-strip-text .gd-turn { color: #fff; }
+.gd-strip-text .gd-turn:empty { display: none; }
+
+/* Alternadores: "Auto" (dispara sozinho em ângulo novo) e "Travar luz" (AE/AWB fixos). Só aparecem quando o aparelho suporta. */
+.gd-toggles { position: absolute; right: 12px; top: calc(50% - 60px); display: flex; flex-direction: column; gap: 8px; }
+.gd-toggle { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 56px; min-height: 56px; padding: 6px 4px; border: 0; border-radius: 16px; background: rgba(0, 0, 0, 0.5); color: rgba(255, 255, 255, 0.85); font: 600 10.5px/1.1 var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; cursor: pointer; transition: background var(--t-state), color var(--t-state); }
+.gd-toggle .ic { width: 20px; height: 20px; }
+.gd-toggle[aria-pressed="true"] { background: var(--color-lime-500); color: var(--color-forest-950); }
+.gd-toggle[hidden] { display: none; }
+.gd-toggle:focus-visible { outline: 2px solid var(--color-lime-500); outline-offset: 2px; }
+
+/* Setor atual já coberto: a borda do quadro fica neutra, mas o disparador avisa. */
+.gd.is-covered .gd-shutter { border-color: rgba(255, 255, 255, 0.55); }
+.gd.is-covered .gd-shutter span { background: rgba(255, 255, 255, 0.7); }
+.gd.is-auto-armed .gd-shutter span { animation: gd-arm 900ms var(--ease) infinite alternate; }
+@keyframes gd-arm { from { background: #fff; } to { background: var(--color-lime-500); } }
+
+/* Revisão: mapa das três voltas ao lado do resumo. */
+.gd-map { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 16px; align-items: center; margin-top: 16px; padding: 14px; border-radius: 16px; background: var(--color-canvas); }
+.gd-map svg { width: 112px; height: 112px; }
+.gd-map .gd-sec { stroke: rgba(17, 17, 17, 0.1); stroke-width: 9; }
+.gd-map .gd-sec.is-on { stroke: var(--color-forest-800); }
+.gd-map .gd-pass[data-pass="0"] .gd-sec.is-on { stroke: var(--color-forest-950); }
+.gd-map-legend { display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; }
+.gd-map-legend li { display: flex; justify-content: space-between; gap: 10px; }
+.gd-map-legend b { font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+.gd-map-legend .is-full b { color: var(--f3d-positive); }
+.gd-map-legend .is-empty { color: var(--color-muted); }
+
+@media (max-height: 700px) { .gd-strip { top: calc(73% + 8px); gap: 4px; } .gd-strip-text { font-size: 10.5px; } }
+@media (min-width: 768px) { .gd-strip { left: 20%; right: 20%; } .gd-toggles { right: 24px; } }
+@media (prefers-reduced-motion: reduce) { .gd.is-auto-armed .gd-shutter span { animation: none; background: var(--color-lime-500); } .gd-strip-here { transition: none; } }
+
+/* Scanner guiado: o preview mostra o quadro inteiro e o guia segue a área real do vídeo. */
+.gd-video { object-fit: contain; }
+.gd.is-fitted .gd-frame { left: var(--fx); top: var(--fy); width: var(--fw); height: var(--fh); right: auto; bottom: auto; }
+.gd.is-fitted .gd-strip { left: var(--fx); width: var(--fw); right: auto; top: calc(var(--fy) + var(--fh) + 14px); }
+.gd-discard { width: 100%; margin-top: 4px; color: var(--color-muted); text-decoration: none; font-weight: 500; }
+.gd-discard:hover { color: var(--f3d-negative); }

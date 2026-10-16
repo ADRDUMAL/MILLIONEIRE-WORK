@@ -25,14 +25,14 @@ window.FormaGuided = (function () {
   var Cam = window.FormaCamera, PC = window.FormaPhotoCheck;
 
   var PASSES = [
-    { key: 'mid', label: 'Altura do produto', short: 'Volta 1', sectors: 16,
+    { key: 'mid', label: 'Altura do produto', short: 'Volta 1', sectors: 24,
       start: 'Comece pela frente, na altura do centro do produto.', go: 'Continue andando devagar ao redor do produto.' },
-    { key: 'high', label: 'Um pouco de cima', short: 'Volta 2', sectors: 12,
+    { key: 'high', label: 'Um pouco de cima', short: 'Volta 2', sectors: 16,
       start: 'Agora incline um pouco a câmera para baixo.', go: 'Mesma volta, com a câmera mais alta.' },
-    { key: 'low', label: 'Um pouco de baixo', short: 'Volta 3', sectors: 8,
+    { key: 'low', label: 'Um pouco de baixo', short: 'Volta 3', sectors: 12,
       start: 'Última volta. Capture as partes que ainda faltam.', go: 'Câmera mais baixa, quando der.' },
   ];
-  var TARGET = PASSES.reduce(function (n, p) { return n + p.sectors; }, 0); // 36
+  var TARGET = PASSES.reduce(function (n, p) { return n + p.sectors; }, 0); // 52
   var SAMPLE_MS = 250;
   var CENTER = { x: 0.2, y: 0.15, w: 0.6, h: 0.7 };
 
@@ -127,6 +127,13 @@ window.FormaGuided = (function () {
           '</div>' +
         '</div>' +
         '<div class="gd-frame" aria-hidden="true"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>' +
+        // Faixa de ângulos: um segmento por setor da volta atual; a posição atual vem da bússola.
+        '<div class="gd-strip" aria-hidden="true"><div class="gd-strip-row"></div><span class="gd-strip-here" hidden></span>' +
+          '<p class="gd-strip-text"><span><b class="gd-cov">0</b> de <span class="gd-cov-total">16</span> ângulos</span><span class="gd-turn"></span></p></div>' +
+        '<div class="gd-toggles">' +
+          '<button type="button" class="gd-toggle" data-gd-auto aria-pressed="false" hidden title="Dispara sozinho quando você chega a um ângulo novo">' + icon('sparkle', 20) + '<span>Auto</span></button>' +
+          '<button type="button" class="gd-toggle" data-gd-lock aria-pressed="false" hidden title="Mantém exposição e cor iguais em todas as fotos">' + icon('sun', 20) + '<span>Travar luz</span></button>' +
+        '</div>' +
         '<div class="gd-guide">' +
           '<div class="gd-ring" role="img" aria-label="Cobertura das três voltas">' + ringSvg() + '<span class="gd-ring-ic">' + icon('cube', 18) + '</span></div>' +
           '<div class="gd-guide-text">' +
@@ -148,11 +155,13 @@ window.FormaGuided = (function () {
         '<p class="gd-kicker">Revisão</p>' +
         '<h2 id="gd-rev-t">Confira as fotos</h2>' +
         '<ul class="gd-summary notes"></ul>' +
+        '<div class="gd-map" role="img" aria-label="Mapa de cobertura das três voltas"></div>' +
         '<ul class="gd-grid" aria-label="Fotos capturadas"></ul>' +
         '<div class="gd-actions gd-actions-row">' +
           '<button type="button" class="btn btn-secondary" data-gd-more>' + icon('camera', 18) + '<span>Fotografar mais</span></button>' +
           '<button type="button" class="btn btn-primary" data-gd-use>' + icon('check', 18) + '<span>Usar fotos</span></button>' +
         '</div>' +
+        '<button type="button" class="gd-link gd-discard" data-gd-discard>' + icon('trash', 16) + '<span>Descartar estas fotos</span></button>' +
       '</section>' +
 
       // Erro
@@ -189,12 +198,28 @@ window.FormaGuided = (function () {
       var session = null, sampler = null, heading = null, wake = null, timer = null, closed = false;
       var shots = [], passIdx = 0, passBase = [null, null, null], filled = PASSES.map(function (p) { return new Array(p.sectors).fill(0); });
       var lastLuma = null, lastKeyLuma = null, sharpRef = 0, busy = false, hintTimer = null, seq = 0;
+      // Qualidade fotogramétrica: disparo automático por ângulo novo, trava de exposição e leitura
+      // contínua de movimento/posição. `hereSector` é o setor da volta atual apontado agora.
+      var auto = false, lockSup = null, lockState = null, userUnlocked = false, stable = 0, lastShotAt = 0, hereSector = null, lastMad = 99;
+      var stripRow = $('.gd-strip-row'), stripHere = $('.gd-strip-here'), covEl = $('.gd-cov'), covTotalEl = $('.gd-cov-total'), turnEl = $('.gd-turn');
+      var autoBtn = $('[data-gd-auto]'), lockBtn = $('[data-gd-lock]');
+      // Uma só fonte de foto por sessão (sensor OU quadro do stream): misturar as duas põe no mesmo
+      // conjunto intrínsecos e campos de visão diferentes. Decidida na primeira foto.
+      var photoSource = null, pitchBase = null, pitchHinted = [false, false, false];
 
       document.body.appendChild(root);
       document.body.classList.add('gd-open');
 
       // ---------- ciclo de vida ----------
-      function stopLoop() { if (timer) { clearInterval(timer); timer = null; } }
+      function stopLoop() { if (timer) { clearInterval(timer); timer = null; } lastLuma = null; lastMad = 99; }
+      function requestWake() { if (navigator.wakeLock && navigator.wakeLock.request) navigator.wakeLock.request('screen').then(function (w) { wake = w; }).catch(function () {}); }
+      function onVisible() { if (!closed && document.visibilityState === 'visible' && root.dataset.view === 'live') requestWake(); }
+      document.addEventListener('visibilitychange', onVisible);
+      // Botão "voltar" do Android: age como o X (revisão se há fotos) em vez de sair do assistente e perder tudo.
+      var pushedState = false;
+      try { history.pushState({ formaGuided: 1 }, ''); pushedState = true; } catch (e) { /* ignora */ }
+      function onPop() { if (closed) return; pushedState = false; if (root.dataset.view === 'live' && shots.length) showReview(); else if (root.dataset.view === 'review') { show('live'); startLoop(); paint(); try { history.pushState({ formaGuided: 1 }, ''); pushedState = true; } catch (e) { /* ignora */ } } else close(null); }
+      window.addEventListener('popstate', onPop);
       function releaseWake() { if (wake) { try { wake.release(); } catch (e) { /* ignora */ } wake = null; } }
       function stopCamera() { if (session && !opts.stream) session.stop(); session = null; }
       function close(value) {
@@ -204,6 +229,10 @@ window.FormaGuided = (function () {
         if (heading) heading.stop();
         if (!value || value.fallback) shots.forEach(function (s) { URL.revokeObjectURL(s.url); });
         document.removeEventListener('keydown', onKey, true);
+        document.removeEventListener('visibilitychange', onVisible);
+        window.removeEventListener('popstate', onPop);
+        window.removeEventListener('resize', fitFrame);
+        if (pushedState && history.state && history.state.formaGuided) { try { history.back(); } catch (e) { /* ignora */ } }
         document.body.classList.remove('gd-open');
         root.remove();
         if (previous && previous.focus) { try { previous.focus(); } catch (e) { /* ignora */ } }
@@ -216,8 +245,14 @@ window.FormaGuided = (function () {
       }
 
       function onKey(e) {
-        if (e.key === 'Escape') { e.preventDefault(); if (root.dataset.view === 'live' && shots.length) showReview(); else close(null); return; }
-        if (root.dataset.view === 'live' && (e.key === ' ' || e.key === 'Enter') && document.activeElement === shutter) { e.preventDefault(); shoot(); return; }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          if (root.dataset.view === 'live' && shots.length) showReview();
+          else if (root.dataset.view === 'review') { show('live'); startLoop(); paint(); shutter.focus(); }
+          else close(null);
+          return;
+        }
+        if (root.dataset.view === 'live' && (e.key === ' ' || e.key === 'Enter') && document.activeElement === shutter) { e.preventDefault(); shoot(false); return; }
         if (e.key !== 'Tab') return;
         var f = $$('button, summary, [href]').filter(function (el) { return !el.disabled && !el.closest('[hidden]') && el.offsetParent !== null; });
         if (!f.length) return;
@@ -233,21 +268,43 @@ window.FormaGuided = (function () {
           : Cam.open({ deviceId: deviceId });
         return get.then(function (s) {
           if (closed) { if (!opts.stream) s.stop(); return; }
-          session = s;
-          video.srcObject = s.stream;
-          s.track.addEventListener('ended', function () { if (!closed && root.dataset.view === 'live') fail('A câmera foi desligada pelo sistema.'); });
+          attach(s);
           return video.play().catch(function () {});
         }).then(function () {
           if (closed || !session) return;
           if (!session.width) { session.width = video.videoWidth; session.height = video.videoHeight; }
+          fitFrame();
           var res = Cam.describe(video.videoWidth || session.width, video.videoHeight || session.height);
           $('.gd-res').textContent = res;
           $('.gd-res').hidden = !res;
           $('[data-gd-switch]').hidden = !session.canSwitch;
           sampler = sampler || Frames.createSampler(video, 160);
+          lockSup = Cam.lockSupport ? Cam.lockSupport(session.track) : { any: false };
+          lockState = null; userUnlocked = false;
+          lockBtn.hidden = !lockSup.any;
+          lockBtn.setAttribute('aria-pressed', 'false');
         });
       }
       function fail(msg) { stopLoop(); releaseWake(); $('.gd-error-text').textContent = msg; show('error'); $('[data-gd-retry]').focus(); }
+      // Liga a sessão ao <video> e escuta o fim da track (também depois de trocar de lente).
+      function attach(s) {
+        session = s;
+        video.srcObject = s.stream;
+        s.track.addEventListener('ended', function () { if (!closed && session === s && root.dataset.view === 'live') fail('A câmera foi desligada pelo sistema.'); });
+      }
+      // O preview mostra o quadro INTEIRO (object-fit: contain): o que você vê é o que sai na foto. O
+      // quadro-guia e a faixa de ângulos são posicionados sobre a área realmente ocupada pelo vídeo.
+      function fitFrame() {
+        var vw = video.videoWidth, vh = video.videoHeight, W = root.clientWidth, H = root.clientHeight;
+        if (!vw || !vh || !W || !H) return;
+        var scale = Math.min(W / vw, H / vh), dw = vw * scale, dh = vh * scale, dx = (W - dw) / 2, dy = (H - dh) / 2;
+        var st = root.style;
+        st.setProperty('--fx', (dx + dw * 0.12).toFixed(1) + 'px'); st.setProperty('--fw', (dw * 0.76).toFixed(1) + 'px');
+        st.setProperty('--fy', (dy + dh * 0.22).toFixed(1) + 'px'); st.setProperty('--fh', (dh * 0.52).toFixed(1) + 'px');
+        root.classList.add('is-fitted');
+      }
+      video.addEventListener('loadedmetadata', fitFrame);
+      window.addEventListener('resize', fitFrame);
 
       function begin() {
         var btn = $('[data-gd-start]'); btn.disabled = true;
@@ -257,7 +314,8 @@ window.FormaGuided = (function () {
         perm.then(function () { return startCamera(); }).then(function () {
           if (closed) return;
           show('live'); paint(); startLoop();
-          if (navigator.wakeLock && navigator.wakeLock.request) navigator.wakeLock.request('screen').then(function (w) { wake = w; }).catch(function () {});
+          requestWake();
+          if (heading && heading.hasSensor) { /* bússola ativa */ } else if (heading && Heading.supported()) hint('Sem bússola ativa: a cobertura é estimada pela quantidade de fotos.', 'warn', 4000);
           shutter.focus();
         }).catch(function (err) { btn.disabled = false; fail(Cam.errorMessage(err)); });
       }
@@ -272,9 +330,28 @@ window.FormaGuided = (function () {
           var ex = Q.exposure(s.luma, s.w, s.h, CENTER);
           darkStreak = ex.mean < 50 ? darkStreak + 1 : 0;
           if (darkStreak === 8) hint('Pouca luz. Acenda uma luz ou aproxime o produto de uma janela.', 'warn');
+          lastMad = lastLuma ? Q.motion(lastLuma, s.luma).mad : 99;
           lastLuma = s.luma;
         }
         paintHere();
+        autoTick();
+      }
+      // Setor da volta atual para um heading da bússola (null sem bússola ou antes da primeira foto).
+      function sectorOf(hdg) {
+        if (hdg == null || passBase[passIdx] == null) return null;
+        var p = PASSES[passIdx], step = 360 / p.sectors;
+        return Math.floor(norm(hdg - passBase[passIdx]) / step) % p.sectors;
+      }
+      // Disparo automático: só com bússola. Quando a câmera aponta para um setor ainda vazio e o
+      // aparelho está parado por duas amostras (~500 ms), a foto sai sozinha. Mantém o espaçamento
+      // regular entre fotos — a sobreposição constante é o que a reconstrução mais precisa.
+      function autoTick() {
+        if (!auto || busy || root.dataset.view !== 'live') { root.classList.remove('is-auto-armed'); return; }
+        var fresh = hereSector != null && filled[passIdx][hereSector] === 0;
+        root.classList.toggle('is-auto-armed', fresh);
+        if (!fresh) { stable = 0; return; }
+        stable = lastMad < 7 ? stable + 1 : 0;
+        if (stable >= 2 && Date.now() - lastShotAt > 900) { stable = 0; shoot(true); }
       }
       function sensorHeading() {
         if (!heading) return null;
@@ -283,64 +360,152 @@ window.FormaGuided = (function () {
       }
       function paintHere() {
         var here = $('.gd-here'), h = sensorHeading();
-        if (h == null || passBase[passIdx] == null) { here.setAttribute('hidden', ''); return; }
-        var a = (norm(h - passBase[passIdx]) - 90) * Math.PI / 180, r = RING.r[passIdx];
+        if (h != null && autoBtn.hidden && root.dataset.view === 'live') autoBtn.hidden = false;
+        hereSector = sectorOf(h);
+        if (h == null || passBase[passIdx] == null) { here.setAttribute('hidden', ''); stripHere.hidden = true; root.classList.remove('is-covered'); return; }
+        var rel = norm(h - passBase[passIdx]);
+        var a = (rel - 90) * Math.PI / 180, r = RING.r[passIdx];
         here.setAttribute('cx', (RING.c + r * Math.cos(a)).toFixed(2));
         here.setAttribute('cy', (RING.c + r * Math.sin(a)).toFixed(2));
         here.removeAttribute('hidden');
+        stripHere.style.left = (rel / 360 * 100).toFixed(2) + '%';
+        stripHere.hidden = false;
+        root.classList.toggle('is-covered', filled[passIdx][hereSector] > 0);
       }
 
       // ---------- disparo ----------
-      function hint(text, tone) {
+      var rejectTimer = null;
+      function hint(text, tone, ms) {
         hintEl.textContent = text;
         hintEl.className = 'gd-hint' + (tone ? ' is-' + tone : '');
         clearTimeout(hintTimer);
-        hintTimer = setTimeout(function () { hintEl.textContent = ''; hintEl.className = 'gd-hint'; }, tone === 'ok' ? 1400 : 3200);
+        hintTimer = setTimeout(function () { hintEl.textContent = ''; hintEl.className = 'gd-hint'; }, ms || (tone === 'ok' ? 1400 : 3200));
+      }
+      // Trava de exposição/cor/foco (Chrome Android). Liga sozinha na terceira foto aceita, quando o
+      // aparelho permite; o usuário pode soltar e a escolha dele vale até o fim da captura.
+      function setLock(on, automatic) {
+        if (!session || !lockSup || !lockSup.any || opts.stream) return Promise.resolve();
+        var task = on ? Cam.lock(session.track) : Cam.unlock(session.track).then(function () { return null; });
+        return task.then(function (st) {
+          var ok = !!(st && (st.exposure || st.whiteBalance || st.focus));
+          lockState = on && ok ? st : null;
+          lockBtn.setAttribute('aria-pressed', on && ok ? 'true' : 'false');
+          if (on && ok) hint(automatic ? 'Luz travada: a textura fica uniforme entre as fotos. Toque em “Travar luz” para soltar.' : 'Luz travada.', 'ok', automatic ? 3600 : 1400);
+          else if (on) hint('Este aparelho não deixa travar a exposição.', 'warn');
+          else hint('Exposição automática de novo.', 'ok');
+        });
       }
 
-      function shoot() {
-        if (busy || !sampler || shots.length >= MAX) return;
-        var s = sampler.sample();
+      // Espera o aparelho assentar depois do toque (o próprio toque treme o celular): até 500 ms
+      // amostrando a cada 100 ms, até o movimento cair. Resolve com a amostra estável ou a última.
+      function settle(maxMs) {
+        var t0 = Date.now(), prev = sampler.sample();
+        return new Promise(function (resolve) {
+          (function step() {
+            setTimeout(function () {
+              var s = sampler.sample();
+              if (!s) return resolve(prev);
+              var mad = prev ? Q.motion(prev.luma, s.luma).mad : 99;
+              if (mad < 6 || Date.now() - t0 >= maxMs) return resolve(s);
+              prev = s; step();
+            }, 100);
+          })();
+        });
+      }
+      function shoot(fromAuto, settled) {
+        if (busy || !sampler) return;
+        if (shots.length >= MAX) { hint('Limite de ' + MAX + ' fotos. Toque em Concluir para revisar.', 'warn'); return; }
+        var s = settled || sampler.sample();
         if (!s) { hint('A câmera ainda está abrindo.', 'warn'); return; }
         var sharp = Q.sharpness(s.luma, s.w, s.h, CENTER);
         var ex = Q.exposure(s.luma, s.w, s.h, CENTER);
         var mv = lastLuma ? Q.motion(lastLuma, s.luma).mad : 0;
+        if (!settled && !fromAuto && mv > 6 && mv <= 16) {
+          busy = true; shutter.classList.add('is-busy');
+          settle(500).then(function (st) { busy = false; shutter.classList.remove('is-busy'); shoot(false, st || s); });
+          return;
+        }
+        var pi = passIdx; // a volta é a do toque, não a de quando o blob chegar
+        // Inclinação (beta): a volta 2 é vista de cima e a 3 de baixo. Sem exigir ângulos exatos (variam por
+        // aparelho), compara com a inclinação da volta 1 e orienta uma vez por volta.
+        var pitch = heading && typeof heading.pitch === 'number' ? heading.pitch : null;
+        if (pitch != null) {
+          if (pi === 0 && pitchBase == null) pitchBase = pitch;
+          if (pitchBase != null && !pitchHinted[pi]) {
+            if (pi === 1 && pitch > pitchBase - 8) { pitchHinted[pi] = true; hint('Volta 2: suba a câmera e incline para baixo — esta volta é vista de cima.', 'warn', 3600); }
+            if (pi === 2 && pitch < pitchBase + 8) { pitchHinted[pi] = true; hint('Volta 3: abaixe a câmera e aponte um pouco para cima — fecha a parte de baixo.', 'warn', 3600); }
+          }
+        }
         var nov = lastKeyLuma ? Q.novelty(lastKeyLuma, s.luma) : 1;
+        // Sobreposição: a foto nova deve repetir boa parte da anterior. Duas leituras — a diferença
+        // visual (nov acima de T.noveltyMax) e, com bússola, um salto de mais de dois setores.
+        var hdgNow = sensorHeading(), secNow = sectorOf(hdgNow), p0 = PASSES[passIdx];
+        var lastSame = shots.filter(function (x) { return x.pass === passIdx; }).slice(-1)[0] || null;
+        var jump = lastSame && secNow != null && lastSame.sector != null ? Math.min(Math.abs(secNow - lastSame.sector), p0.sectors - Math.abs(secNow - lastSame.sector)) : 0;
+        var gap = !!(lastKeyLuma && (nov > (Q.T.noveltyMax || 0.42) || jump > 2));
+        // Luz: brilho médio muito diferente da mediana das fotos aceitas = textura com emendas.
+        var means = shots.map(function (x) { return x.mean; }), med = means.length ? PC.median(means) : ex.mean;
+        var light = shots.length >= 3 && med > 0 && Math.abs(ex.mean - med) / med > 0.35;
         // Recusas na hora — a foto não entra e a dica diz o que fazer.
         var reject = '';
         if (ex.mean < 32) reject = 'Escuro demais. Acenda uma luz e tente de novo.';
         else if (mv > 16) reject = 'Você estava se movendo. Pare um instante e toque de novo.';
         else if (shots.length >= 3 && sharpRef > 0 && sharp < sharpRef * 0.35) reject = 'Foto tremida ou fora de foco. Segure firme e toque de novo.';
         else if (nov < 0.028) reject = 'Quase igual à anterior. Dê um passo ao lado e fotografe de novo.';
-        if (reject) { hint(reject, 'bad'); buzz([8, 50, 8]); root.classList.remove('is-rejected'); void root.offsetWidth; root.classList.add('is-rejected'); return; }
+        if (reject) {
+          if (fromAuto) return; // no automático, uma amostra ruim só espera a próxima
+          hint(reject, 'bad'); buzz([8, 50, 8]);
+          root.classList.remove('is-rejected'); void root.offsetWidth; root.classList.add('is-rejected');
+          clearTimeout(rejectTimer); rejectTimer = setTimeout(function () { root.classList.remove('is-rejected'); }, 700);
+          return;
+        }
 
         // Foto do sensor (ImageCapture) ocupa a câmera; o quadro do stream é copiado na hora e só a
         // codificação JPEG fica assíncrona — então o disparador responde a toques seguidos.
-        var sensor = !!(session && session.canTakePhoto && !opts.stream);
+        if (!photoSource) photoSource = session && session.canTakePhoto && !opts.stream ? 'sensor' : 'stream';
+        var sensor = photoSource === 'sensor';
         if (sensor) { busy = true; shutter.classList.add('is-busy'); }
         else { shutter.classList.remove('is-shot'); void shutter.offsetWidth; shutter.classList.add('is-shot'); }
         sharpRef = Math.max(sharpRef * 0.97, sharp);
-        var hdg = sensorHeading();
+        var hdg = hdgNow;
         var hash = PC.dhash(video, video.videoWidth, video.videoHeight);
         flash();
-        lastKeyLuma = s.luma;
+        lastShotAt = Date.now();
         capture(sensor).then(function (blob) {
           if (!blob || closed) return;
-          var sector = place(hdg);
+          lastKeyLuma = s.luma;
+          var sector = place(hdg, pi);
           seq += 1;
           var shot = {
             id: 'g' + seq, blob: blob, url: URL.createObjectURL(blob), bytes: blob.size,
             width: blob._w || video.videoWidth, height: blob._h || video.videoHeight,
-            pass: passIdx, sector: sector, heading: hdg, sharp: sharp, mean: ex.mean, clipped: ex.clipped, hash: hash, ok: true,
+            pass: pi, sector: sector, heading: hdg, pitch: pitch, sharp: sharp, mean: ex.mean, clipped: ex.clipped, hash: hash, ok: true,
+            gap: gap, light: light, auto: !!fromAuto, source: blob._source || (sensor ? 'sensor' : 'stream'),
           };
           shots.push(shot);
           buzz(12);
           addThumb(shot);
-          hint('Boa foto', 'ok');
+          // Nitidez e dimensões da FOTO REAL (não da amostra de 160 px do preview), em segundo plano: um
+          // borrão de 3 px numa foto de 12 MP é invisível na amostra, mas aparece aqui.
+          measureShot(shot);
+          if (gap) hint(jump > 2 ? 'Pulou ' + jump + ' ângulos. Volte um pouco: cada foto deve repetir boa parte da anterior.' : 'Mudou muito de ângulo. Volte um pouco: cada foto deve repetir boa parte da anterior.', 'warn');
+          else if (light) hint('A luz mudou. Mantenha a mesma iluminação em todas as fotos.', 'warn');
+          else hint('Boa foto', 'ok');
           paint();
           checkPass();
+          if (shots.length === 3 && lockSup && lockSup.any && !lockState && !userUnlocked) setLock(true, true);
         }).catch(function () { hint('Não foi possível salvar a foto. Tente de novo.', 'bad'); })
           .then(function () { if (sensor) { busy = false; shutter.classList.remove('is-busy'); } });
+      }
+
+      function measureShot(shot) {
+        if (!window.createImageBitmap) return;
+        createImageBitmap(shot.blob).then(function (bmp) {
+          if (closed) { try { bmp.close(); } catch (e) { /* ignora */ } return; }
+          shot.width = bmp.width; shot.height = bmp.height;
+          try { var m = PC.measure(bmp, bmp.width, bmp.height); shot.sharp = m.sharp; shot.mean = m.mean; shot.clipped = m.clipped; shot.hash = m.hash || shot.hash; } catch (e) { /* mantém as medidas do preview */ }
+          try { bmp.close(); } catch (e) { /* ignora */ }
+        }).catch(function () { /* mantém as medidas do preview */ });
       }
 
       // Foto do sensor (ImageCapture) quando existe; senão, o quadro do stream em resolução cheia.
@@ -353,27 +518,29 @@ window.FormaGuided = (function () {
           cv.width = Math.round(vw * scale); cv.height = Math.round(vh * scale);
           cv.getContext('2d').drawImage(video, 0, 0, cv.width, cv.height);
           return new Promise(function (resolve) {
-            cv.toBlob(function (b) { if (b) { b._w = cv.width; b._h = cv.height; } cv.width = cv.height = 0; resolve(b); }, 'image/jpeg', 0.92);
+            cv.toBlob(function (b) { if (b) { b._w = cv.width; b._h = cv.height; b._source = 'stream'; } cv.width = cv.height = 0; resolve(b); }, 'image/jpeg', 0.92);
           });
         };
         if (!sensor) return fromStream();
         return Cam.takePhoto(session.track).then(function (b) {
           if (!b || !b.size) return fromStream();
           // Foto do sensor grande demais para o envio: reduz sem perder a proporção.
-          if (b.size <= PC.T.normalizeBytes) return b;
-          return PC.analyzeFile(new File([b], 'sensor.jpg', { type: b.type || 'image/jpeg' })).then(function (m) { var f = m.file; f._w = m.width; f._h = m.height; return f; });
+          if (b.size <= PC.T.normalizeBytes) { b._source = 'sensor'; return b; }
+          return PC.analyzeFile(new File([b], 'sensor.jpg', { type: b.type || 'image/jpeg' })).then(function (m) { var f = m.file; f._w = m.width; f._h = m.height; f._source = 'sensor'; return f; });
         }).catch(fromStream);
       }
 
       // Setor preenchido: pela bússola quando há; senão, o próximo livre da volta (estimativa).
-      function place(hdg) {
-        var p = PASSES[passIdx], row = filled[passIdx], step = 360 / p.sectors, idx;
+      function place(hdg, pi) {
+        if (pi == null) pi = passIdx;
+        var p = PASSES[pi], row = filled[pi], step = 360 / p.sectors, idx;
         if (hdg != null) {
-          if (passBase[passIdx] == null) passBase[passIdx] = hdg - step / 2;
-          idx = Math.floor(norm(hdg - passBase[passIdx]) / step) % p.sectors;
+          // As três voltas partilham o mesmo zero (a primeira foto da volta 1): o mapa fica alinhado.
+          if (passBase[pi] == null) passBase[pi] = passBase[0] != null ? passBase[0] : hdg - step / 2;
+          idx = Math.floor(norm(hdg - passBase[pi]) / step) % p.sectors;
         } else {
           idx = row.indexOf(0);
-          if (idx < 0) idx = (shotsIn(passIdx)) % p.sectors;
+          if (idx < 0) idx = (shotsIn(pi)) % p.sectors;
         }
         row[idx] += 1;
         return idx;
@@ -421,6 +588,12 @@ window.FormaGuided = (function () {
           g.classList.toggle('is-done', covered(pi) === pp.sectors);
           Array.prototype.forEach.call(g.querySelectorAll('.gd-sec'), function (el, si) { el.classList.toggle('is-on', filled[pi][si] > 0); });
         });
+        // Faixa de ângulos da volta atual (segmentos preenchidos; âmbar = foto com pouca sobreposição).
+        var row = filled[passIdx];
+        if (stripRow.children.length !== row.length) stripRow.innerHTML = row.map(function () { return '<i></i>'; }).join('');
+        Array.prototype.forEach.call(stripRow.children, function (el, i) { el.className = row[i] > 0 ? 'is-on' : ''; });
+        shots.forEach(function (s) { if (s.pass === passIdx && s.gap && stripRow.children[s.sector]) stripRow.children[s.sector].className = 'is-gap'; });
+        covEl.textContent = String(covered(passIdx)); covTotalEl.textContent = String(p.sectors); turnEl.textContent = p.short;
         // Trocar de lente no meio muda a distância focal entre fotos: só antes da primeira.
         $('[data-gd-switch]').hidden = !(session && session.canSwitch) || n > 0;
         doneBtn.disabled = n < MIN;
@@ -442,14 +615,25 @@ window.FormaGuided = (function () {
         PASSES.forEach(function (p, pi) { if (pi && shotsIn(pi) === 0) rows.push({ t: 'muted', m: p.short + ' (' + p.label.toLowerCase() + ') não foi feita. O ' + (pi === 1 ? 'topo' : 'fundo') + ' pode sair com menos detalhe.' }); });
         j.notes.forEach(function (n) { rows.push(n); });
         if (!sensors) rows.push({ t: 'muted', m: 'Sem bússola neste aparelho: a cobertura foi estimada pela quantidade de fotos.' });
+        extraNotes().forEach(function (n) { rows.push(n); });
         var cam = session ? Cam.describe(session.width, session.height) : '';
         if (cam) rows.push({ t: 'muted', m: 'Câmera: ' + (session.label || 'traseira') + ' · ' + cam + (session.canTakePhoto && !opts.stream ? ' · foto do sensor' : '') });
         $('.gd-summary').innerHTML = rows.map(function (r) {
           return '<li class="note note-' + r.t + '">' + icon(r.t === 'ok' ? 'check' : 'alert', 16) + '<span>' + r.m + '</span></li>';
         }).join('');
-        var FLAG = { blur: 'Tremida', dark: 'Escura', bright: 'Estourada', dup: 'Repetida', small: 'Pequena', low: 'Baixa resolução' };
+        var map = $('.gd-map');
+        map.innerHTML = ringSvg() + '<ul class="gd-map-legend">' + PASSES.map(function (p, pi) {
+          var c = covered(pi);
+          return '<li class="' + (c === p.sectors ? 'is-full' : c ? '' : 'is-empty') + '"><span>' + p.short + ' · ' + p.label + '</span><b>' + c + '/' + p.sectors + '</b></li>';
+        }).join('') + '</ul>';
+        var hereDot = map.querySelector('.gd-here'); if (hereDot) hereDot.remove();
+        PASSES.forEach(function (pp, pi) {
+          var g = map.querySelector('.gd-pass[data-pass="' + pi + '"]');
+          Array.prototype.forEach.call(g.querySelectorAll('.gd-sec'), function (el, si) { el.classList.toggle('is-on', filled[pi][si] > 0); });
+        });
+        var FLAG = { blur: 'Tremida', dark: 'Escura', bright: 'Estourada', dup: 'Repetida', small: 'Pequena', low: 'Baixa resolução', gap: 'Pouca sobreposição', light: 'Luz diferente' };
         $('.gd-grid').innerHTML = shots.map(function (s, i) {
-          var flag = ['blur', 'dup', 'dark', 'bright', 'small'].filter(function (f) { return (s.flags || []).indexOf(f) >= 0; })[0];
+          var flag = ['blur', 'dup', 'dark', 'bright', 'small'].filter(function (f) { return (s.flags || []).indexOf(f) >= 0; })[0] || (s.gap ? 'gap' : s.light ? 'light' : null);
           return '<li class="' + (flag ? 'is-flagged' : '') + '"><img src="' + s.url + '" alt="Foto ' + (i + 1) + '" loading="lazy">' +
             (flag ? '<span class="gd-flag">' + FLAG[flag] + '</span>' : '') +
             '<button type="button" class="gd-del" data-del="' + s.id + '" aria-label="Remover foto ' + (i + 1) + '">' + icon('trash', 16) + '</button></li>';
@@ -472,6 +656,26 @@ window.FormaGuided = (function () {
         showReview();
       });
 
+      // Notas de sobreposição e luz: entram na revisão e seguem para o assistente.
+      function extraNotes() {
+        var rows = [];
+        var gaps = shots.filter(function (s) { return s.gap; }).length, lights = shots.filter(function (s) { return s.light; }).length;
+        if (gaps) rows.push({ t: 'warn', m: gaps + (gaps === 1 ? ' foto pulou' : ' fotos pularam') + ' ângulo em relação à anterior. Pouca sobreposição deixa buracos no modelo.' });
+        if (lights) rows.push({ t: 'warn', m: lights + (lights === 1 ? ' foto saiu' : ' fotos saíram') + ' com luz diferente das demais. A textura pode ficar com emendas.' });
+        if (lockState && (lockState.exposure || lockState.whiteBalance)) rows.push({ t: 'ok', m: 'Exposição travada durante a captura: textura uniforme.' });
+        var autos = shots.filter(function (s) { return s.auto; }).length;
+        if (autos) rows.push({ t: 'muted', m: autos + ' de ' + shots.length + ' fotos saíram no modo automático.' });
+        var streamShots = shots.filter(function (s) { return s.source === 'stream'; }).length;
+        if (photoSource === 'sensor' && streamShots) rows.push({ t: 'warn', m: streamShots + (streamShots === 1 ? ' foto saiu' : ' fotos saíram') + ' do preview em vez do sensor (a câmera não respondeu a tempo): resolução menor que as demais.' });
+        var withPitch = shots.filter(function (s) { return s.pitch != null; });
+        if (withPitch.length && pitchBase != null) {
+          var hi = shots.filter(function (s) { return s.pass === 1 && s.pitch != null; }), lo = shots.filter(function (s) { return s.pass === 2 && s.pitch != null; });
+          var avg = function (a) { return a.reduce(function (n, s) { return n + s.pitch; }, 0) / a.length; };
+          if (hi.length && avg(hi) > pitchBase - 8) rows.push({ t: 'warn', m: 'A volta 2 ficou na mesma altura da volta 1. O topo do produto pode sair com menos detalhe.' });
+          if (lo.length && avg(lo) < pitchBase + 8) rows.push({ t: 'warn', m: 'A volta 3 ficou na mesma altura da volta 1. A parte de baixo pode sair com menos detalhe.' });
+        }
+        return rows;
+      }
       function result() {
         var files = shots.map(function (s, i) {
           var name = 'foto-' + String(i + 1).padStart(3, '0') + '.jpg';
@@ -485,7 +689,8 @@ window.FormaGuided = (function () {
           complete: covered(0) === PASSES[0].sectors,
           sensors: shots.some(function (s) { return s.heading != null; }),
           camera: session ? { label: session.label, width: session.width, height: session.height, res: Cam.describe(session.width, session.height), sensorPhoto: !!(session.canTakePhoto && !opts.stream) } : null,
-          notes: PC.judge(shots).notes,
+          notes: PC.judge(shots).notes.concat(extraNotes()),
+          locked: !!lockState,
         };
       }
 
@@ -493,23 +698,44 @@ window.FormaGuided = (function () {
       $$('[data-gd-cancel]').forEach(function (b) { b.addEventListener('click', function () { if (root.dataset.view === 'live' && shots.length) showReview(); else close(null); }); });
       $$('[data-gd-native]').forEach(function (b) { b.addEventListener('click', function () { close({ fallback: 'native' }); }); });
       $('[data-gd-start]').addEventListener('click', begin);
-      shutter.addEventListener('click', shoot);
+      shutter.addEventListener('click', function () { shoot(false); }); // nunca passar o evento: `fromAuto` é booleano
       doneBtn.addEventListener('click', showReview);
       nextBtn.addEventListener('click', advance);
       $('[data-gd-more]').addEventListener('click', function () {
-        show('live'); startLoop();
-        if (navigator.wakeLock && navigator.wakeLock.request) navigator.wakeLock.request('screen').then(function (w) { wake = w; }).catch(function () {});
-        paint(); shutter.focus();
+        var alive = session && session.track && session.track.readyState === 'live';
+        var ready = alive || opts.stream ? Promise.resolve() : startCamera();
+        ready.then(function () {
+          if (closed) return;
+          show('live'); startLoop(); requestWake(); paint(); shutter.focus();
+        }).catch(function (err) { fail(Cam.errorMessage(err)); });
+      });
+      $('[data-gd-discard]').addEventListener('click', function () {
+        var ok = !shots.length || window.confirm('Descartar ' + shots.length + (shots.length === 1 ? ' foto' : ' fotos') + ' desta captura?');
+        if (ok) close(null);
       });
       $('[data-gd-use]').addEventListener('click', function () { if (shots.length >= MIN) close(result()); });
+      lockBtn.addEventListener('click', function () {
+        var on = lockBtn.getAttribute('aria-pressed') !== 'true';
+        if (!on) userUnlocked = true;
+        setLock(on, false);
+      });
+      autoBtn.addEventListener('click', function () {
+        auto = !auto;
+        autoBtn.setAttribute('aria-pressed', auto ? 'true' : 'false');
+        if (!auto) root.classList.remove('is-auto-armed');
+        hint(auto ? 'Automático: ande devagar ao redor do produto; a foto sai sozinha em cada ângulo novo.' : 'Disparo manual.', 'ok', auto ? 3200 : 1400);
+      });
       $('[data-gd-retry]').addEventListener('click', function () { stopCamera(); show('prep'); $('[data-gd-start]').disabled = false; begin(); });
       $('[data-gd-switch]').addEventListener('click', function () {
         if (!session || !session.canSwitch) return;
         var list = session.rear, i = list.findIndex(function (d) { return d.deviceId === session.deviceId; });
         var next = list[(i + 1) % list.length];
         session.switchTo(next.deviceId).then(function (s) {
-          session = s; video.srcObject = s.stream; return video.play().catch(function () {});
+          attach(s); return video.play().catch(function () {});
         }).then(function () {
+          fitFrame();
+          lockSup = Cam.lockSupport ? Cam.lockSupport(session.track) : { any: false }; lockState = null;
+          lockBtn.hidden = !lockSup.any; lockBtn.setAttribute('aria-pressed', 'false');
           $('.gd-res').textContent = Cam.describe(video.videoWidth, video.videoHeight);
           hint('Câmera: ' + (session.label || 'traseira') + '. Use a mesma lente em todas as fotos.', 'ok');
         }).catch(function (err) { fail(Cam.errorMessage(err)); });

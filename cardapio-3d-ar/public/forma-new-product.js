@@ -50,7 +50,7 @@
   function options() {
     var s = $('input[name="surface"]:checked'), q = $('input[name="quality"]:checked');
     var prefs = Store.prefs ? Store.prefs() : {};
-    return { surface: s ? s.value : 'normal', quality: q ? q.value : 'high', isMask: prefs.isMask === 0 ? 0 : 1 };
+    return { surface: s ? s.value : 'normal', quality: q ? q.value : 'standard', isMask: prefs.isMask === 0 ? 0 : 1 };
   }
   function saveDraft() { try { sessionStorage.setItem(DKEY, JSON.stringify(fields())); } catch (e) {} }
   function loadDraft() {
@@ -247,7 +247,8 @@
     var incoming = Array.prototype.slice.call(fileList);
     var done = 0;
     photoCount.textContent = 'Checando ' + incoming.length + (incoming.length > 1 ? ' fotos…' : ' foto…');
-    mapLimit(incoming, 3, function (f) {
+    // Fotos grandes (> 6 MB) uma por vez: três decodificações de 48 MP ao mesmo tempo derrubam a aba no iOS.
+    mapLimit(incoming, incoming.some(function (f) { return f.size > 6 * 1024 * 1024; }) ? 1 : 3, function (f) {
       return analyze(f).then(function (it) { done++; photoCount.textContent = 'Checando fotos… ' + done + '/' + incoming.length; return it; });
     }).then(function (items) {
       items.forEach(function (it) {
@@ -360,7 +361,7 @@
     var parts = [human(file.size)];
     if (info.duration) parts.push(Video.clock(info.duration));
     if (info.width) parts.push(info.width + '×' + info.height);
-    if (info.codecLabel) parts.push(info.codecLabel);
+    if (info.codecLabel) parts.push(esc(info.codecLabel)); // 4 bytes crus do arquivo: nunca sem escape
     else if (info.container === 'webm') parts.push('WebM');
     return parts.join(' · ');
   }
@@ -546,15 +547,22 @@
   function storeFiles(product, p) {
     var role = p.method === 'photos' ? 'photo' : p.method;
     var jobs = p.files.map(function (b, i) { return { key: Store.blobKey(product.id, role, i), blob: b }; });
-    var done = 0;
+    var done = 0, quota = false;
     return jobs.reduce(function (chain, j) {
       return chain.then(function () {
+        if (quota) return;
         return Store.putBlob(j.key, j.blob).then(function () {
           done += 1;
+          // Em modo real a guarda local é só conveniência: a barra mostra o andamento (até 15%) e segue para o envio.
           if (p.method === 'model' || !state.real) setProgress(done / jobs.length * 100, 'Guardando arquivos… ' + done + '/' + jobs.length);
+          else setProgress(2 + done / jobs.length * 13, 'Preparando ' + done + '/' + jobs.length + '…');
+        }).catch(function (err) {
+          // Sem espaço no aparelho (iOS): segue sem guardar; o envio ao servidor não depende disso.
+          if (err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''))) { quota = true; toast('Pouco espaço no aparelho: as fotos vão direto para o envio, sem cópia local.'); return; }
+          throw err;
         });
       });
-    }, Promise.resolve()).then(function () { return jobs.length; });
+    }, Promise.resolve()).then(function () { return quota ? done : jobs.length; });
   }
   function confirmReal(p) {
     var dlg = $('#real-confirm'), o = options();
@@ -635,7 +643,7 @@
   // ---------- Início ----------
   loadDraft();
   var prefs = Store.prefs ? Store.prefs() : {};
-  var q = $('input[name="quality"][value="' + (prefs.quality === 'standard' ? 'standard' : 'high') + '"]'); if (q) q.checked = true;
+  var q = $('input[name="quality"][value="' + (prefs.quality === 'high' ? 'high' : 'standard') + '"]'); if (q) q.checked = true;
   var draftMethod = (function () { try { return (JSON.parse(sessionStorage.getItem(DKEY) || 'null') || {}).method; } catch (e) { return null; } })();
   setMethod(draftMethod || (Guided && Guided.support().ok ? 'camera' : 'photos'));
   renderPhotos();

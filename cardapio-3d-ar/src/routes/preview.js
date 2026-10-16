@@ -355,8 +355,8 @@ r.get('/studio/produtos/novo', (req, res) => {
             <fieldset class="field seg-field" id="quality-field">
               <legend>Qualidade do modelo</legend>
               <div class="seg seg-2" role="radiogroup" aria-label="Qualidade do modelo">
-                <label class="seg-opt"><input type="radio" name="quality" value="high" checked><span>Alta<small>textura 4K · leva mais tempo</small></span></label>
-                <label class="seg-opt"><input type="radio" name="quality" value="standard"><span>Padrão<small>mais rápido</small></span></label>
+                <label class="seg-opt"><input type="radio" name="quality" value="standard" checked><span>Padrão<small>textura 2K · abre rápido em AR</small></span></label>
+                <label class="seg-opt"><input type="radio" name="quality" value="high"><span>Alta<small>textura 4K · fotos grandes, mais tempo</small></span></label>
               </div>
             </fieldset>
             <dl class="review" id="review-list"></dl>
@@ -611,8 +611,8 @@ r.get('/studio/configuracoes', (req, res) => {
         ${section('prefs', 'Preferências 3D', 'Valem para os próximos modelos. Dá para mudar em cada envio.', html`
           <fieldset class="seg-field"><legend>Qualidade padrão</legend>
             <div class="seg seg-2">
-              <label class="seg-opt"><input type="radio" name="st-quality" value="high"><span>Alta<small>textura 4K · leva mais tempo</small></span></label>
-              <label class="seg-opt"><input type="radio" name="st-quality" value="standard"><span>Padrão<small>mais rápido</small></span></label>
+              <label class="seg-opt"><input type="radio" name="st-quality" value="standard"><span>Padrão<small>textura 2K · abre rápido em AR</small></span></label>
+              <label class="seg-opt"><input type="radio" name="st-quality" value="high"><span>Alta<small>textura 4K · fotos grandes, mais tempo</small></span></label>
             </div>
           </fieldset>
           <label class="st-toggle"><input type="checkbox" id="st-mask"><span><b>Separar o produto do fundo</b><small>Recorte automático do objeto antes da reconstrução.</small></span></label>

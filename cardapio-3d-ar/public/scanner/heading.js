@@ -34,6 +34,8 @@ window.FormaScanHeading = (function () {
       angle: 0,              // ângulo estimado da órbita, contínuo (pode passar de 360)
       lastSensorAt: 0,
       orbitness: 0,          // média móvel: 1 = orbitando de verdade, 0 = girando no lugar
+      absSeen: false,        // já chegou um evento ABSOLUTO (bússola): os relativos passam a ser ignorados
+      pitch: null,           // inclinação do aparelho (beta, graus): diferencia volta alta/baixa
       flowAccum: 0,          // pixels de fundo integrados (modo visual)
       pxPerTurn: opts.pxPerTurn || 0, // calibração do modo visual (definida em start())
       direction: 0,          // -1 / 0 / +1: sentido dominante da caminhada
@@ -43,12 +45,22 @@ window.FormaScanHeading = (function () {
     // Safari dá a bússola pronta em webkitCompassHeading; os demais usam alpha (0 = norte, cresce
     // no sentido anti-horário) — invertemos para que os dois cresçam no mesmo sentido.
     function headingFrom(e) {
-      if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) return norm(e.webkitCompassHeading);
+      // webkitCompassAccuracy < 0 = bússola do iOS sem calibração: o valor não serve.
+      if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) return e.webkitCompassAccuracy < 0 ? null : norm(e.webkitCompassHeading);
       if (typeof e.alpha === 'number' && !isNaN(e.alpha)) return norm(360 - e.alpha);
       return null;
     }
+    // No Chrome Android `deviceorientation` (relativo, zero arbitrário) e `deviceorientationabsolute`
+    // (bússola) disparam intercalados. Misturar os dois no mesmo `raw` espalhava as fotos em setores
+    // aleatórios. Assim que um evento absoluto chega, só ele vale.
+    function isAbsolute(e) {
+      return e.type === 'deviceorientationabsolute' || e.absolute === true || typeof e.webkitCompassHeading === 'number';
+    }
 
     function onOrientation(e) {
+      if (typeof e.beta === 'number' && !isNaN(e.beta)) state.pitch = e.beta;
+      var abs = isAbsolute(e);
+      if (abs) state.absSeen = true; else if (state.absSeen) return;
       var hd = headingFrom(e);
       if (hd == null) return;
       state.raw = hd;
@@ -125,8 +137,12 @@ window.FormaScanHeading = (function () {
       get orbitness() { return state.orbitness; },
       get direction() { return state.direction; },
       get hasSensor() { return state.mode === 'sensor' && Date.now() - state.lastSensorAt < 3000; },
+      get pitch() { return state.pitch; },
+      get absolute() { return state.absSeen; },
       // Só para a tela de revisão e para os testes.
-      debug: function () { return { mode: state.mode, angle: state.angle, orbitness: state.orbitness, raw: state.raw, base: state.base, flowAccum: state.flowAccum }; },
+      debug: function () { return { mode: state.mode, angle: state.angle, orbitness: state.orbitness, raw: state.raw, base: state.base, flowAccum: state.flowAccum, pitch: state.pitch, absolute: state.absSeen }; },
+      // Para testes: injeta um evento como o navegador faria.
+      _feed: onOrientation,
     };
   }
 

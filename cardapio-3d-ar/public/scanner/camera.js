@@ -79,6 +79,8 @@ window.FormaCamera = (function () {
       if (caps.focusMode && caps.focusMode.indexOf('continuous') >= 0) adv.focusMode = 'continuous';
       if (caps.exposureMode && caps.exposureMode.indexOf('continuous') >= 0) adv.exposureMode = 'continuous';
       if (caps.whiteBalanceMode && caps.whiteBalanceMode.indexOf('continuous') >= 0) adv.whiteBalanceMode = 'continuous';
+      // Zoom neutro: fotogrametria precisa da mesma distância focal em todas as fotos.
+      if (caps.zoom && typeof caps.zoom.min === 'number') adv.zoom = Math.min(caps.zoom.max || 1, Math.max(1, caps.zoom.min));
       if (Object.keys(adv).length && track.applyConstraints) return track.applyConstraints({ advanced: [adv] }).catch(function () {});
     } catch (e) { /* ignora */ }
     return Promise.resolve();
@@ -129,9 +131,15 @@ window.FormaCamera = (function () {
         canTakePhoto: typeof window.ImageCapture === 'function',
         stop: function () { stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { /* ignora */ } }); },
         describe: function () { return describe(session.width, session.height); },
+        // Abre a nova câmera ANTES de fechar a atual. Se a nova falhar (iOS devolve NotReadableError logo
+        // após parar uma câmera), a sessão atual continua viva; se ela já tiver morrido, reabre pelo deviceId.
         switchTo: function (deviceId) {
-          session.stop();
-          return openLadder(deviceId, opts.maxLong && opts.maxLong <= 1920 ? LADDER.slice(1) : LADDER).then(function (st) { return build(st, opts); });
+          var ladder = opts.maxLong && opts.maxLong <= 1920 ? LADDER.slice(1) : LADDER;
+          return openLadder(deviceId, ladder).then(function (st) { session.stop(); return build(st, opts); })
+            .catch(function (err) {
+              if (track.readyState === 'live') throw err;
+              return openLadder(session.deviceId || null, ladder).then(function (st) { return build(st, opts); });
+            });
         },
       };
       log('aberta', session.label || '(sem nome)', session.width + '×' + session.height, 'traseiras:', rear.map(function (d) { return d.label; }).join(' | ') || '—');
@@ -161,11 +169,15 @@ window.FormaCamera = (function () {
 
   // Foto em resolução do SENSOR quando o navegador permite (ImageCapture, Chrome Android).
   // Sem isso (iOS/Safari), quem chama recorta o quadro do <video> na resolução do stream.
+  var photoCaps = typeof WeakMap === 'function' ? new WeakMap() : null; // capabilities por track: só uma consulta
   function takePhoto(track, timeoutMs) {
     if (typeof window.ImageCapture !== 'function') return Promise.resolve(null);
     var ic;
     try { ic = new window.ImageCapture(track); } catch (e) { return Promise.resolve(null); }
-    var shot = ic.getPhotoCapabilities().then(function (caps) {
+    var cached = photoCaps && photoCaps.get(track);
+    var capsP = cached || ic.getPhotoCapabilities().catch(function () { return null; });
+    if (photoCaps && !cached) photoCaps.set(track, capsP);
+    var shot = capsP.then(function (caps) {
       var ps = {};
       if (caps && caps.fillLightMode && caps.fillLightMode.indexOf('off') >= 0) ps.fillLightMode = 'off';
       if (caps && caps.imageWidth && caps.imageWidth.max) ps.imageWidth = caps.imageWidth.max;
@@ -175,5 +187,39 @@ window.FormaCamera = (function () {
     return Promise.race([shot, timer]).catch(function () { return null; });
   }
 
-  return { open: open, errorMessage: errorMessage, describe: describe, takePhoto: takePhoto, listRear: listRear, preferredRear: preferredRear, _constraintsFor: constraintsFor, LADDER: LADDER };
+  // ---------- Travar exposição, balanço de branco e foco ----------
+  // Fotogrametria precisa da MESMA luz em todas as fotos: com exposição automática, cada quadro sai
+  // com brilho e temperatura de cor diferentes e a textura final fica com emendas. Chrome Android
+  // expõe exposureMode/whiteBalanceMode/focusMode 'manual' em track.getCapabilities(); o iOS não.
+  // Travar = ler o valor atual (getSettings) e fixá-lo. Destravar = voltar ao contínuo.
+  function lockSupport(track) {
+    var out = { exposure: false, whiteBalance: false, focus: false, any: false };
+    try {
+      var caps = track && track.getCapabilities ? track.getCapabilities() : {};
+      var s = track && track.getSettings ? track.getSettings() : {};
+      out.exposure = !!(caps.exposureMode && caps.exposureMode.indexOf('manual') >= 0 && typeof s.exposureTime === 'number');
+      out.whiteBalance = !!(caps.whiteBalanceMode && caps.whiteBalanceMode.indexOf('manual') >= 0 && typeof s.colorTemperature === 'number');
+      out.focus = !!(caps.focusMode && caps.focusMode.indexOf('manual') >= 0 && typeof s.focusDistance === 'number');
+      out.any = out.exposure || out.whiteBalance || out.focus;
+    } catch (e) { /* sem capabilities */ }
+    return out;
+  }
+  function lock(track) {
+    var sup = lockSupport(track);
+    if (!sup.any || !track.applyConstraints) return Promise.resolve({ exposure: false, whiteBalance: false, focus: false });
+    var s = track.getSettings(), adv = {};
+    if (sup.exposure) { adv.exposureMode = 'manual'; adv.exposureTime = s.exposureTime; }
+    if (sup.whiteBalance) { adv.whiteBalanceMode = 'manual'; adv.colorTemperature = s.colorTemperature; }
+    if (sup.focus) { adv.focusMode = 'manual'; adv.focusDistance = s.focusDistance; }
+    return track.applyConstraints({ advanced: [adv] }).then(function () {
+      log('travado', Object.keys(adv).filter(function (k) { return /Mode$/.test(k); }).join(', '));
+      return { exposure: sup.exposure, whiteBalance: sup.whiteBalance, focus: sup.focus };
+    }).catch(function (err) { log('não travou:', err && err.message); return { exposure: false, whiteBalance: false, focus: false }; });
+  }
+  function unlock(track) {
+    if (!track || !track.applyConstraints) return Promise.resolve();
+    return tune(track);
+  }
+
+  return { open: open, errorMessage: errorMessage, describe: describe, takePhoto: takePhoto, listRear: listRear, preferredRear: preferredRear, lockSupport: lockSupport, lock: lock, unlock: unlock, _constraintsFor: constraintsFor, LADDER: LADDER };
 })();

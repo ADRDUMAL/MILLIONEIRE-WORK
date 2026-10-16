@@ -16,24 +16,45 @@ export default function formaApiRoutes({ cfg, runtime, jobs, log = console }) {
   const configView = () => publicConfig(f, { ...runtime, realJobsUsed: jobs.countRealJobs() });
 
   // Em produção o processamento real exige, além das variáveis, a sessão de administrador do painel.
+  const isAdmin = (req) => !!(req.user && req.user.is_admin);
   function gate(req, res, next) {
     if (!runtime.enabled) return sendError(res, 503, 'REAL_PROCESSING_DISABLED', `Processamento real indisponível. ${runtime.reason}`.trim());
-    if (runtime.requiresAdmin && !(req.user && req.user.is_admin)) return sendError(res, 403, 'ADMIN_REQUIRED', 'Em produção, o processamento real exige uma sessão de administrador.');
+    if (runtime.requiresAdmin && !isAdmin(req)) return sendError(res, 403, 'ADMIN_REQUIRED', 'Em produção, o processamento real exige uma sessão de administrador.');
+    next();
+  }
+  // Leitura (status e modelo): em produção também só para administrador; fora dela segue aberta
+  // (beta privado por convite, ids com 72 bits de aleatoriedade).
+  function readGate(req, res, next) {
+    if (runtime.requiresAdmin && !isAdmin(req)) return sendError(res, 403, 'ADMIN_REQUIRED', 'Em produção, o processamento real exige uma sessão de administrador.');
+    next();
+  }
+  // Antes de receber um único byte: teto de custo e tamanho total declarado. Quem já estourou
+  // FORMA_MAX_REAL_JOBS não faz o servidor gravar gigabytes para então ouvir 429.
+  function preUpload(req, res, next) {
+    if (jobs.countRealJobs() >= f.maxRealJobs) return sendError(res, 429, 'JOB_LIMIT', `Limite de ${f.maxRealJobs} tarefa(s) real(is) atingido neste ambiente (FORMA_MAX_REAL_JOBS).`);
+    const declared = Number(req.get('content-length') || 0);
+    const method = String(req.query.method || 'photos');
+    const ceiling = (method === 'video' ? f.maxVideoBytes : f.photosMax * f.maxPhotoBytes) + 2 * 1048576;
+    if (declared > ceiling) return sendError(res, 413, 'FILE_TOO_LARGE', `O envio declara ${(declared / 1048576).toFixed(0)} MB; o máximo para ${method === 'video' ? 'um vídeo' : 'fotos'} é ${(ceiling / 1048576).toFixed(0)} MB.`);
     next();
   }
 
   // Upload em disco, direto na área temporária da Forma 3D; limites por arquivo e por quantidade.
-  const upload = multer({
-    storage: multer.diskStorage({
-      // Uma pasta temporária por requisição (não por arquivo), removida ao final em qualquer caso.
-      destination: (req, file, cb) => {
-        if (!req.formaTmpDir) { req.formaTmpDir = path.join(jobs.dirs.temp, 'in-' + crypto.randomBytes(6).toString('hex')); fs.mkdirSync(req.formaTmpDir, { recursive: true }); }
-        cb(null, req.formaTmpDir);
-      },
-      filename: (req, file, cb) => cb(null, crypto.randomBytes(8).toString('hex')),
-    }),
-    limits: { fileSize: Math.max(f.maxPhotoBytes, f.maxVideoBytes), files: f.photosMax + 1, fields: 20 },
-  }).fields([{ name: 'photos', maxCount: f.photosMax + 1 }, { name: 'video', maxCount: 1 }]);
+  // Dois receptores: o de fotos limita cada arquivo a maxPhotoBytes; o de vídeo, a maxVideoBytes.
+  // O cliente informa o método em ?method= (o campo do corpo só existe depois de ler tudo).
+  const storage = multer.diskStorage({
+    // Uma pasta temporária por requisição (não por arquivo), removida ao final em qualquer caso.
+    destination: (req, file, cb) => {
+      if (!req.formaTmpDir) { req.formaTmpDir = path.join(jobs.dirs.temp, 'in-' + crypto.randomBytes(6).toString('hex')); fs.mkdirSync(req.formaTmpDir, { recursive: true }); }
+      cb(null, req.formaTmpDir);
+    },
+    filename: (req, file, cb) => cb(null, crypto.randomBytes(8).toString('hex')),
+  });
+  const uploadPhotos = multer({ storage, limits: { fileSize: f.maxPhotoBytes, files: f.photosMax + 1, fields: 20, parts: f.photosMax + 40 } })
+    .fields([{ name: 'photos', maxCount: f.photosMax + 1 }, { name: 'video', maxCount: 1 }]);
+  const uploadVideo = multer({ storage, limits: { fileSize: f.maxVideoBytes, files: 1, fields: 20, parts: 40 } })
+    .fields([{ name: 'video', maxCount: 1 }, { name: 'photos', maxCount: 1 }]);
+  const upload = (req, res, cb) => (String(req.query.method || 'photos') === 'video' ? uploadVideo : uploadPhotos)(req, res, cb);
 
   const discard = (req) => {
     if (req.formaTmpDir) { try { fs.rmSync(req.formaTmpDir, { recursive: true, force: true }); } catch { /* ignora */ } }
@@ -41,7 +62,7 @@ export default function formaApiRoutes({ cfg, runtime, jobs, log = console }) {
 
   r.get('/config', (req, res) => res.json(configView()));
 
-  r.post('/jobs', gate, (req, res) => {
+  r.post('/jobs', gate, preUpload, (req, res) => {
     req.setTimeout(f.uploadTimeoutMs);
     upload(req, res, async (err) => {
       if (err) {
@@ -53,9 +74,11 @@ export default function formaApiRoutes({ cfg, runtime, jobs, log = console }) {
       try {
         const method = String(req.body?.method || (req.files?.video?.length ? 'video' : 'photos'));
         const clientKey = String(req.get('Idempotency-Key') || req.body?.clientKey || '').slice(0, 120);
+        // Escopo da chave de idempotência: a conta logada ou, sem login, o IP.
+        const ownerScope = req.user ? `u:${req.user.id}` : `ip:${req.ip || ''}`;
         const result = await jobs.createJob({
           method, photos: req.files?.photos || [], video: req.files?.video?.[0] || null,
-          productId: String(req.body?.productId || '').slice(0, 80), clientKey,
+          productId: String(req.body?.productId || '').slice(0, 80), clientKey, ownerScope,
           options: { quality: String(req.body?.quality || ''), surface: String(req.body?.surface || ''), isMask: req.body?.isMask },
         });
         // Arquivos movidos para uploads/<job>; o que sobrou na pasta temporária é descartado.
@@ -64,13 +87,13 @@ export default function formaApiRoutes({ cfg, runtime, jobs, log = console }) {
       } catch (e) {
         discard(req);
         if (e instanceof JobError) return sendError(res, e.status, e.code, e.message);
-        log.error(`[forma] criação de tarefa: ${e.message}`);
+        log.error(`[forma] criação de tarefa: ${runtime.provider ? runtime.provider.redact(e.message) : e.message}`);
         sendError(res, 500, 'INTERNAL', 'Erro interno ao criar a tarefa.');
       }
     });
   });
 
-  r.get('/jobs/:jobId', async (req, res) => {
+  r.get('/jobs/:jobId', readGate, async (req, res) => {
     const id = String(req.params.jobId);
     if (!/^frj_[\w-]{6,40}$/.test(id)) return sendError(res, 404, 'NOT_FOUND', 'Tarefa não encontrada.');
     try {
@@ -84,7 +107,7 @@ export default function formaApiRoutes({ cfg, runtime, jobs, log = console }) {
     }
   });
 
-  r.get('/jobs/:jobId/model', (req, res) => {
+  r.get('/jobs/:jobId/model', readGate, (req, res) => {
     const id = String(req.params.jobId);
     const abs = /^frj_[\w-]{6,40}$/.test(id) ? jobs.modelPath(id) : null;
     if (!abs || !fs.existsSync(abs)) return sendError(res, 404, 'NOT_FOUND', 'Modelo não disponível.');

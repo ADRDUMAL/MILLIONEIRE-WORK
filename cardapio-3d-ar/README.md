@@ -38,11 +38,26 @@ KIRI_API_KEY=...          # só o servidor lê; nunca vai ao navegador, a logs o
 FORMA_MAX_REAL_JOBS=1     # teto de tarefas reais neste ambiente (custo)
 ```
 
-Fluxo: fotos (20–300) ou vídeo (MP4/MOV, ≤3 min, ≤1920×1080) → `POST /api/forma/reconstruction/jobs` → validação no servidor → envio ao KIRI (Photo Scan: GLB, Medium, 2K, máscara ligada, sem suavização) → polling server-side com backoff → download do ZIP → extração segura do GLB (`src/forma/zip.js`) → validação glTF 2.0 → `data/forma/models/<job>.glb` → `GET /api/forma/reconstruction/jobs/:id/model` → visualizador. Estados do KIRI (-1/3/0/1/2/4) viram enviando/na fila/processando/erro/pronto/expirado; sem percentual inventado. Tabelas isoladas `forma_reconstruction_jobs` e `forma_reconstruction_assets` (migração 002). Em `NODE_ENV=production` exige ainda `FORMA_ALLOW_REAL_IN_PRODUCTION=1` e sessão de administrador.
+Fluxo: fotos (20–300) ou vídeo (MP4/MOV, ≤3 min, ≤1920×1080) → `POST /api/forma/reconstruction/jobs?method=photos|video` → validação no servidor (teto de custo e `Content-Length` antes de receber bytes; fotos inválidas no meio do lote ficam de fora com aviso) → envio ao KIRI (Photo Scan: GLB, Medium, 2K, máscara ligada, sem suavização; 4K só com fotos ≥ 2000 px) → polling server-side com backoff → download do ZIP **em segundo plano** (um por tarefa; falha de rede tenta de novo sem reenviar) → extração segura do GLB (`src/forma/zip.js`) → validação glTF 2.0 (cabeçalho, BIN, malhas) → `data/forma/models/<job>.glb` → `GET /api/forma/reconstruction/jobs/:id/model` → visualizador. Tarefas interrompidas por reinício recomeçam sozinhas; o `serialize` de cada tentativa fica no histórico da tarefa. Estados do KIRI (-1/3/0/1/2/4) viram enviando/na fila/processando/erro/pronto/expirado; sem percentual inventado. Tabelas isoladas `forma_reconstruction_jobs` e `forma_reconstruction_assets` (migração 002). Em `NODE_ENV=production` exige ainda `FORMA_ALLOW_REAL_IN_PRODUCTION=1` e sessão de administrador.
 
 - Testes (`npm test`) usam um KIRI falso em processo e nunca consomem créditos.
 - Interface em modo real sem créditos: `node scripts/fake-kiri-server.js` e `KIRI_BASE_URL=http://127.0.0.1:4747 KIRI_API_KEY=fake ...`.
 - Teste real por terminal (1 crédito, pede `SIM`): `KIRI_LIVE_TEST=true npm run kiri:live -- ./pasta-com-fotos`; o resultado abre em `/studio/tarefas/<jobId>`.
+
+### Fase 5 — fotos guiadas com controle fotogramétrico (16/10/2026)
+
+Em `/studio/produtos/novo`, **Escanear com a câmera** abre a captura guiada por fotos: três voltas
+(24/16/12 ângulos), faixa de ângulos sob o quadro com a posição da bússola, recusa na hora de foto
+escura/tremida/repetida, aviso de **pouca sobreposição** (salto de ângulo) e de **luz diferente**,
+**Travar luz** (AE/AWB/AF fixos no Chrome Android, liga sozinho na 3ª foto), modo **Auto** (dispara
+ao apontar para um ângulo vazio, só com bússola), inclinação conferida nas voltas alta e baixa, foto
+estável (espera o tremor do toque passar), nitidez medida na foto real e mapa de cobertura na revisão.
+O preview mostra o quadro inteiro (`object-fit: contain`): o que se vê é o que sai na foto.
+
+Qualidade padrão é **2K** (`standard`); 4K só com fotos ≥ 2000 px no lado maior — abaixo disso (ou
+com vídeo) o servidor cai para 2K e avisa. A API JSON de reconstrução exige o cabeçalho
+`X-Requested-With: FormaStudio` nas mutações (proteção CSRF) e, em produção, sessão de administrador
+também para ler status e modelo. Detalhes e bugs corrigidos em `REDESIGN_LOG.md`.
 
 ### Fase 4 — captura guiada pela câmera (vídeo direto do celular)
 

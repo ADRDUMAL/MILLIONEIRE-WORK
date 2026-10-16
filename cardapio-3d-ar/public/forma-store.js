@@ -173,7 +173,9 @@ window.FormaStore = (function () {
   // Vivem neste navegador, como os produtos do preview. Quem lê: assistente (qualidade e máscara),
   // página pública (cor do viewer, assinatura) e o próprio Estúdio.
   var PREF_KEY = 'forma3d.studio.v1';
-  var PREF_DEFAULTS = { studioName: '', owner: '', logo: '', viewerBg: '#F3F2EF', signature: true, quality: 'high', isMask: 1 };
+  // Qualidade padrão "standard" (Medium / textura 2K): é o que abre rápido em AR no celular; 4K só
+  // vale com fotos grandes e quando o modelo vai ser exportado.
+  var PREF_DEFAULTS = { studioName: '', owner: '', logo: '', viewerBg: '#F3F2EF', signature: true, quality: 'standard', isMask: 1 };
   function prefs() {
     var saved = {};
     try { saved = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) { saved = {}; }

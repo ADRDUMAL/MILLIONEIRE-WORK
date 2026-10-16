@@ -107,6 +107,8 @@ window.FormaReconstruction = (function () {
     { key: 'finishing', label: 'Preparando modelo' },
   ];
   var API = '/api/forma/reconstruction';
+  // Cabeçalho que o servidor exige nas mutações desta API (proteção CSRF sem token de formulário).
+  var HDR = { 'X-Requested-With': 'FormaStudio' };
   function parseResponse(res) {
     return res.json().catch(function () { return {}; }).then(function (body) {
       if (!res.ok) { var err = new Error((body.error && body.error.message) || ('Erro ' + res.status)); err.code = body.error && body.error.code; err.status = res.status; throw err; }
@@ -145,7 +147,8 @@ window.FormaReconstruction = (function () {
       (input.files || []).forEach(function (f) { fd.append(input.method === 'video' ? 'video' : 'photos', f, f.name); });
       return new Promise(function (resolve, reject) {
         var xhr = new XMLHttpRequest();
-        xhr.open('POST', API + '/jobs');
+        xhr.open('POST', API + '/jobs?method=' + encodeURIComponent(input.method || 'photos'));
+        xhr.setRequestHeader('X-Requested-With', 'FormaStudio');
         if (input.clientKey) xhr.setRequestHeader('Idempotency-Key', input.clientKey);
         xhr.timeout = 20 * 60 * 1000;
         xhr.upload.onprogress = function (e) { if (input.onProgress && e.lengthComputable) input.onProgress(e.loaded, e.total); };
@@ -164,7 +167,7 @@ window.FormaReconstruction = (function () {
       });
     },
     retryJob: function (jobId) {
-      return fetch(API + '/jobs/' + encodeURIComponent(jobId) + '/retry', { method: 'POST' }).then(parseResponse).then(function (body) { return remoteView(body.job); });
+      return fetch(API + '/jobs/' + encodeURIComponent(jobId) + '/retry', { method: 'POST', headers: HDR }).then(parseResponse).then(function (body) { return remoteView(body.job); });
     },
     getJobStatus: function (jobId) {
       return fetch(API + '/jobs/' + encodeURIComponent(jobId), { cache: 'no-store' }).then(parseResponse).then(function (body) { return remoteView(body.job); });
@@ -175,9 +178,9 @@ window.FormaReconstruction = (function () {
         return { modelUrl: v.modelUrl, format: 'glb', simulated: false, provider: v.provider };
       });
     },
-    cancelJob: function (jobId) { return fetch(API + '/jobs/' + encodeURIComponent(jobId), { method: 'DELETE' }).then(function () { return true; }).catch(function () { return false; }); },
+    cancelJob: function (jobId) { return fetch(API + '/jobs/' + encodeURIComponent(jobId), { method: 'DELETE', headers: HDR }).then(function (r) { return r.ok; }).catch(function () { return false; }); },
     failJob: function () { return Promise.resolve(false); }, // só existe no simulado
-    dropJob: function (jobId) { return fetch(API + '/jobs/' + encodeURIComponent(jobId) + '?purge=1', { method: 'DELETE' }).then(function () { return true; }).catch(function () { return false; }); },
+    dropJob: function (jobId) { return fetch(API + '/jobs/' + encodeURIComponent(jobId) + '?purge=1', { method: 'DELETE', headers: HDR }).then(function (r) { return r.ok; }).catch(function () { return false; }); },
   };
 
   // Seleção: o servidor informa se o processamento real está ligado; senão, simulação (fallback).
@@ -231,6 +234,17 @@ window.FormaReconstruction = (function () {
     VIDEO_RESOLUTION: ['Resolução acima do limite', 'O envio direto aceita vídeos até 1920 × 1080.', 'Grave em 1080p, ou abra esta página no navegador do celular para extrair os quadros aqui.'],
     VIDEO_CODEC: ['Codec não suportado neste navegador', 'O vídeo usa um codec que este navegador não abre.', 'Abra esta página no celular em que o vídeo foi gravado.'],
     VIDEO_FEW_FRAMES: ['Poucos ângulos no vídeo', 'O vídeo tem poucos trechos diferentes do produto.', 'Grave uma volta completa, devagar, com 30 segundos ou mais.'],
+    ADMIN_REQUIRED: ['Acesso restrito', 'Neste servidor, o processamento real só pode ser acionado por um administrador conectado.', 'Entre com a conta de administrador e tente de novo.'],
+    CSRF: ['Sessão expirada', 'A sessão desta página não é mais válida.', 'Recarregue a página e tente de novo.'],
+    TOO_MANY_FILES: ['Arquivos demais', 'O limite é de 300 fotos ou 1 vídeo por envio.', 'Remova as repetidas e tente de novo.'],
+    EMPTY_FILE: ['Arquivo vazio', 'Um dos arquivos enviados está vazio.', 'Remova o arquivo e tente de novo.'],
+    NO_VIDEO: ['Vídeo ausente', 'O envio não trouxe nenhum vídeo.', 'Grave ou escolha um vídeo e tente de novo.'],
+    INVALID_METHOD: ['Método inválido', 'O envio não disse se são fotos ou vídeo.', 'Recarregue a página e tente de novo.'],
+    NOT_RETRYABLE: ['Não dá para reenviar', 'Reenviar os mesmos arquivos não mudaria o resultado.', 'Refaça a captura ou fale com o suporte.'],
+    UPLOAD_INTERRUPTED: ['Envio interrompido', 'O servidor reiniciou enquanto enviava seus arquivos ao serviço.', 'Toque em "Tentar novamente": os arquivos ficaram guardados.'],
+    NOT_FOUND: ['Tarefa não encontrada', 'Esta tarefa não existe mais no servidor.', 'Crie o produto de novo.'],
+    MODEL_UNAVAILABLE: ['Modelo indisponível', 'O arquivo do modelo não está mais no servidor.', 'Reenvie a captura.'],
+    INTERNAL: ['Erro no servidor', 'Algo deu errado do nosso lado.', 'Tente de novo; se repetir, fale com o suporte.'],
   };
   api.explain = function (code, message) {
     var e = EXPLAIN[code];

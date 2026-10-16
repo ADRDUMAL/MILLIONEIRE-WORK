@@ -124,6 +124,7 @@ test('assistente V2: fotos guiadas em destaque, alternativas preservadas e módu
   assert.match(html, /id="video-record"/);
   assert.match(html, /Como é a superfície do produto\?/);
   assert.match(html, /name="quality" value="high"/);
+  assert.match(html, /name="quality" value="standard" checked/, 'o padrão é 2K: 4K só vale com fotos grandes e pesa 3× no celular');
   assert.match(html, /id="real-confirm"/);
   assert.match(html, /HTTPS/);
   // Módulos servidos na ordem em que dependem uns dos outros.
@@ -136,6 +137,7 @@ test('assistente V2: fotos guiadas em destaque, alternativas preservadas e módu
   assert.match(cam, /window\.FormaCamera/);
   assert.match(cam, /ideal: 3840/); assert.match(cam, /getSettings/); assert.match(cam, /enumerateDevices/);
   assert.doesNotMatch(cam, /max: 1080/);
+  assert.doesNotMatch(fs.readFileSync(new URL('../public/forma-capture.js', import.meta.url), 'utf8'), /max: 1080/, 'o teto de 1080p na gravação também não pode usar max');
   const guided = await (await fetch(`${ctx.base}/static/forma-guided.js`)).text();
   assert.match(guided, /window\.FormaGuided/); assert.match(guided, /isSecureContext/);
   const vid = await (await fetch(`${ctx.base}/static/forma-video.js`)).text();

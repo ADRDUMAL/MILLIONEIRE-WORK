@@ -64,20 +64,26 @@ export function sessionMiddleware(db) {
     // Em multipart o corpo ainda não foi lido: a rota chama csrfAfterUpload depois do multer.
     const isMultipart = /^multipart\/form-data/i.test(req.headers['content-type'] || '');
     const exempt = CSRF_EXEMPT.has(req.path); // rotas públicas sem efeito na conta (métricas anônimas)
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.user && !isMultipart && !exempt && !verifyCsrf(req)) {
+    // A API JSON da Forma 3D é chamada por fetch/XHR com um cabeçalho próprio: um formulário de
+    // outro site não consegue enviá-lo sem preflight CORS, e a Origin ainda precisa bater com o host.
+    const formaApi = req.path.startsWith('/api/forma/reconstruction/') && req.headers['x-requested-with'] === 'FormaStudio' && originOk(req);
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.user && !isMultipart && !exempt && !formaApi && !verifyCsrf(req)) {
+      if (req.path.startsWith('/api/')) return res.status(403).json({ error: { code: 'CSRF', message: 'Sessão inválida (CSRF). Recarregue a página e tente de novo.' } });
       return res.status(403).send('Sessão inválida (CSRF). Recarregue a página e tente de novo.');
     }
     next();
   };
 }
 
-export function verifyCsrf(req) {
-  const sent = req.body?._csrf || req.headers['x-csrf-token'];
+export function originOk(req) {
   const origin = req.headers.origin;
   const host = req.headers['x-forwarded-host'] || req.headers.host;
-  let originOk = true;
-  if (origin && origin !== 'null') { try { originOk = new URL(origin).host === host; } catch { originOk = false; } }
-  return !!req.user && sent === req.user.csrf && originOk;
+  if (!origin || origin === 'null') return true;
+  try { return new URL(origin).host === host; } catch { return false; }
+}
+export function verifyCsrf(req) {
+  const sent = req.body?._csrf || req.headers['x-csrf-token'];
+  return !!req.user && sent === req.user.csrf && originOk(req);
 }
 // Para rotas multipart: usar logo após o multer.
 export function csrfAfterUpload(req, res, next) {

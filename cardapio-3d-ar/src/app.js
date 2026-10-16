@@ -75,6 +75,9 @@ export function createApp(cfg, { log = console, formaFetch = undefined, formaEnv
     formaTimer = setInterval(() => formaJobs.pollActive().catch((e) => log.error(`[forma] polling: ${e.message}`)), cfg.forma.pollSeconds * 1000);
     formaTimer.unref();
   }
-  app.shutdown = () => { if (timer) clearInterval(timer); if (formaTimer) clearInterval(formaTimer); db.close(); };
+  // Retenção de uploads e temporários roda mesmo em modo simulado (sem isso nada era apagado).
+  const sweepTimer = setInterval(() => { try { formaJobs.sweep(); } catch (e) { log.error(`[forma] varredura: ${e.message}`); } }, 15 * 60 * 1000);
+  sweepTimer.unref();
+  app.shutdown = () => { if (timer) clearInterval(timer); if (formaTimer) clearInterval(formaTimer); clearInterval(sweepTimer); db.close(); };
   return app;
 }

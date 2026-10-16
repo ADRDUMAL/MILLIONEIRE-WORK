@@ -87,10 +87,10 @@ async function startForma(formaOverrides = {}, env = {}) {
 }
 after(async () => { for (const s of servers) await s.close(); });
 
-const photosForm = (n, { method = 'photos', productId = 'p1' } = {}) => {
+const photosForm = (n, { method = 'photos', productId = 'p1', width = 1600, height = 1200 } = {}) => {
   const fd = new FormData();
   fd.append('method', method); fd.append('productId', productId);
-  for (let i = 0; i < n; i++) fd.append('photos', new Blob([fakeJpeg(1600, 1200)], { type: 'image/jpeg' }), `foto-${i + 1}.jpg`);
+  for (let i = 0; i < n; i++) fd.append('photos', new Blob([fakeJpeg(width, height)], { type: 'image/jpeg' }), `foto-${i + 1}.jpg`);
   return fd;
 };
 const postJob = (base, fd, headers = {}) => fetch(`${base}/api/forma/reconstruction/jobs`, { method: 'POST', body: fd, headers });
@@ -211,8 +211,9 @@ test('criação de job: envia ao KIRI com os parâmetros iniciais e responde só
 test('clique duplicado: mesma Idempotency-Key devolve a mesma tarefa sem novo envio', async () => {
   const ctx = await startForma();
   const uploadsBefore = state.calls.filter((c) => c.includes('photo/image')).length;
-  const a = await (await postJob(ctx.base, photosForm(20), { 'Idempotency-Key': 'dup-1' })).json();
-  const r = await postJob(ctx.base, photosForm(20), { 'Idempotency-Key': 'dup-1' });
+  const KEY = 'dup-0123456789abcdef'; // a chave precisa ter entropia (≥ 16 caracteres)
+  const a = await (await postJob(ctx.base, photosForm(20), { 'Idempotency-Key': KEY })).json();
+  const r = await postJob(ctx.base, photosForm(20), { 'Idempotency-Key': KEY });
   assert.equal(r.status, 200);
   const b = await r.json();
   assert.equal(b.duplicate, true); assert.equal(b.job.jobId, a.job.jobId);
@@ -220,6 +221,13 @@ test('clique duplicado: mesma Idempotency-Key devolve a mesma tarefa sem novo en
   await new Promise((res) => setTimeout(res, 100));
   assert.equal(state.calls.filter((c) => c.includes('photo/image')).length - uploadsBefore, 1);
   assert.equal(get(ctx.db, 'SELECT COUNT(*) AS n FROM forma_reconstruction_jobs').n, 1);
+  // Chave curta ("click-1") não vale como idempotência: cada envio cria a própria tarefa.
+  const c = await (await postJob(ctx.base, photosForm(20), { 'Idempotency-Key': 'click-1' })).json();
+  const d = await (await postJob(ctx.base, photosForm(20), { 'Idempotency-Key': 'click-1' })).json();
+  assert.notEqual(c.job.jobId, d.job.jobId);
+  // A chave pertence a quem a enviou: outro cliente (outro IP/sessão) com a mesma chave não recebe a tarefa alheia.
+  const other = await (await postJob(ctx.base, photosForm(20), { 'Idempotency-Key': KEY, 'X-Forwarded-For': '203.0.113.9' })).json();
+  assert.equal(other.duplicate, false);
 });
 
 test('limite de jobs reais configurável', async () => {
@@ -238,7 +246,8 @@ test('acompanhamento: fila → processando → download do ZIP → GLB validado 
   const p = (await getJob(ctx, job.jobId)).body.job;
   assert.equal(p.status, 'processing'); assert.equal(p.progress, null); assert.ok(p.stage.length > 0);
   state.jobs[ser].status = 2;
-  const done = (await getJob(ctx, job.jobId)).body.job;
+  // O download do modelo acontece em segundo plano: a consulta responde na hora e a tarefa fica "pronta" logo depois.
+  const done = await waitFor(async () => { const j = (await getJob(ctx, job.jobId)).body.job; return j.status === 'done' ? j : null; });
   assert.equal(done.status, 'done');
   assert.equal(done.modelUrl, `/api/forma/reconstruction/jobs/${job.jobId}/model`);
   const m = await fetch(ctx.base + done.modelUrl);
@@ -295,8 +304,9 @@ test('download inválido, ZIP inseguro e GLB inválido falham com segurança', a
     const { job } = await (await postJob(ctx.base, photosForm(20))).json();
     const ser = await waitFor(() => serializeOf(ctx, job.jobId));
     state.zipVariant[ser] = variant; state.jobs[ser].status = 2;
-    const j = (await getJob(ctx, job.jobId)).body.job;
+    const j = await waitFor(async () => { const x = (await getJob(ctx, job.jobId)).body.job; return x.status === 'error' ? x : null; });
     assert.equal(j.status, 'error', variant); assert.match(j.message, pattern);
+    assert.equal(j.errorCode, 'RESULT_INVALID'); assert.equal(j.retryable, false, 'reenviar as mesmas fotos não muda um resultado inválido');
     assert.equal(j.modelUrl, null);
     assert.equal((await fetch(`${ctx.base}/api/forma/reconstruction/jobs/${job.jobId}/model`)).status, 404);
   }
@@ -319,10 +329,14 @@ const withOptions = (fd, opts) => { for (const [k, v] of Object.entries(opts)) f
 
 test('preset "high" pede textura 4K e malha Alta; valor desconhecido cai no padrão do servidor', async () => {
   const ctx = await startForma();
-  let { job } = await (await postJob(ctx.base, withOptions(photosForm(20), { quality: 'high' }))).json();
+  let { job } = await (await postJob(ctx.base, withOptions(photosForm(20, { width: 4032, height: 3024 }), { quality: 'high' }))).json();
   await waitFor(() => serializeOf(ctx, job.jobId));
   assert.equal(state.lastUpload.modelQuality, '0'); assert.equal(state.lastUpload.textureQuality, '0');
   assert.equal(job.quality, 'high');
+  // Fotos pequenas (1600 px) não sustentam textura 4K: o servidor cai para 2K e avisa.
+  const small = await (await postJob(ctx.base, withOptions(photosForm(20), { quality: 'high' }))).json();
+  await waitFor(() => serializeOf(ctx, small.job.jobId));
+  assert.equal(state.lastUpload.textureQuality, '1'); assert.equal(small.job.quality, 'standard'); assert.match(small.warning, /2K/);
   ({ job } = await (await postJob(ctx.base, withOptions(photosForm(20), { quality: '9; DROP' }))).json());
   await waitFor(() => serializeOf(ctx, job.jobId));
   assert.equal(state.lastUpload.modelQuality, '1'); assert.equal(job.quality, 'standard');

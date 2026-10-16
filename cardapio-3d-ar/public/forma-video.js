@@ -68,7 +68,7 @@ window.FormaVideo = (function () {
       }
       return step();
     }).then(function (o) {
-      o.confirmed = o.duration != null && o.width != null;
+      o.confirmed = o.duration != null && o.duration > 0 && o.width != null; // mvhd.duration = 0 (MP4 fragmentado) não confirma nada
       o.codecLabel = o.codec ? (CODEC_LABEL[o.codec] || o.codec) : '';
       return o;
     }).catch(function () { return out; });

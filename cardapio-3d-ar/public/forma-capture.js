@@ -14,14 +14,14 @@
 window.FormaCapture = (function () {
   'use strict';
   var MAX_SECONDS = 180;          // limite do serviço de reconstrução (3 minutos)
-  var GUIDE_SECONDS = 60;         // duração da guia (4 etapas de 15 s)
-  var MIN_RECOMMENDED = 45, MAX_RECOMMENDED = 90;
-  var BITRATE = 6000000;          // ~6 Mbps: 1080p com textura legível, ~45 MB por minuto
+  var GUIDE_SECONDS = 90;         // duração da guia (4 etapas de 22,5 s): uma volta completa e uma volta alta inteira
+  var MIN_RECOMMENDED = 60, MAX_RECOMMENDED = 120;
+  var BITRATE = 10000000;         // ~10 Mbps: textura nítida em 1080p; 90 s ≈ 110 MB, dentro dos 300 MB
   var STAGES = [
-    { label: 'Frente', hint: 'Comece de frente para o produto, a cerca de um metro.' },
-    { label: 'Lateral', hint: 'Continue girando devagar para o lado, sem parar.' },
-    { label: 'Traseira', hint: 'Siga até a parte de trás, mantendo o produto no centro.' },
-    { label: 'Ângulo superior', hint: 'Suba a câmera e incline para baixo em uma volta mais alta.' },
+    { label: 'Frente', hint: 'Comece de frente para o produto, a cerca de um metro, na altura dele.' },
+    { label: 'Lateral', hint: 'Continue girando devagar para o lado, sem parar nem mudar a distância.' },
+    { label: 'Traseira', hint: 'Siga até a parte de trás e volte à frente, mantendo o produto no centro.' },
+    { label: 'Volta de cima', hint: 'Suba a câmera, incline para baixo e dê uma segunda volta completa.' },
   ];
   // Candidatos em ordem de preferência. MP4 (H.264) primeiro: é o que o serviço de reconstrução aceita.
   var MIME_CANDIDATES = [
@@ -69,7 +69,8 @@ window.FormaCapture = (function () {
     // Mesma seleção de câmera da captura guiada (lente principal, resolução real). O teto de 1080p
     // continua valendo para o vídeo: é o limite do serviço quando o arquivo vai inteiro.
     if (window.FormaCamera) return window.FormaCamera.open({ maxLong: 1920 }).then(function (s) { return s.stream; });
-    var full = { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920, max: 1920 }, height: { ideal: 1080, max: 1080 }, frameRate: { ideal: 30, max: 30 } } };
+    // Fallback sem FormaCamera: só `ideal` em resolução — um `max` em height derrubava o retrato para 608 × 1080.
+    var full = { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } } };
     return navigator.mediaDevices.getUserMedia(full).catch(function (err) {
       if (err && (err.name === 'OverconstrainedError' || err.name === 'ConstraintNotSatisfiedError')) {
         return navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'environment' } })
@@ -85,13 +86,16 @@ window.FormaCapture = (function () {
     if (n === 'NotReadableError' || n === 'TrackStartError') return 'A câmera está em uso por outro aplicativo. Feche-o e tente de novo.';
     return 'Não foi possível abrir a câmera' + (err && err.message ? ': ' + err.message : '.');
   }
-  // Garante o teto de 1080p mesmo quando a câmera entregou mais (em qualquer orientação).
+  // Garante o teto de 1080p mesmo quando a câmera entregou mais, respeitando a orientação do quadro.
+  // Só `ideal`: um teto em `height` derrubava o retrato do iPhone para 608 × 1080.
   function capTrack(track) {
     var s = track.getSettings ? track.getSettings() : {};
     var w = s.width || 0, h = s.height || 0;
     var tooBig = (w > 1920 || h > 1080) && (h > 1920 || w > 1080);
     if (!tooBig || !track.applyConstraints) return Promise.resolve(s);
-    return track.applyConstraints({ width: { max: 1920 }, height: { max: 1080 } }).then(function () { return track.getSettings(); }).catch(function () { return s; });
+    var landscape = w >= h;
+    var c = landscape ? { width: { ideal: 1920 }, height: { ideal: 1080 } } : { width: { ideal: 1080 }, height: { ideal: 1920 } };
+    return track.applyConstraints(c).then(function () { return track.getSettings(); }).catch(function () { return s; });
   }
 
   // ---------- Interface ----------
@@ -118,8 +122,8 @@ window.FormaCapture = (function () {
         '</div>' +
         '<ol class="cap-stages" aria-label="Etapas da captura">' + STAGES.map(function (s) { return '<li><span>' + s.label + '</span></li>'; }).join('') + '</ol>' +
         '<p class="cap-instr">Centralize o produto no contorno</p>' +
-        '<p class="cap-hint">Toque no botão para começar. Mova-se lentamente ao redor do produto: frente, lateral, traseira e uma volta mais alta.</p>' +
-        '<p class="cap-note">A guia avança por tempo: ela sugere o ritmo, não detecta a cobertura real do produto. Recomendado: 45 a 90 s.</p>' +
+        '<p class="cap-hint">Toque no botão para começar. Mova-se lentamente ao redor do produto: uma volta na altura dele e uma segunda volta mais alta.</p>' +
+        '<p class="cap-note">A guia avança por tempo: ela sugere o ritmo, não detecta a cobertura real do produto. Recomendado: 60 a 120 s.</p>' +
       '</div>' +
       '<div class="cap-actions">' +
         '<button type="button" class="cap-shutter" data-cap-start aria-label="Iniciar gravação"><i></i></button>' +
@@ -173,13 +177,24 @@ window.FormaCapture = (function () {
         stopStream();
         if (reviewUrl) { try { URL.revokeObjectURL(reviewUrl); } catch (e) { /* ignora */ } }
         document.removeEventListener('keydown', onKey, true);
+        document.removeEventListener('visibilitychange', onVisible);
+        window.removeEventListener('popstate', onPop);
+        if (pushedState && history.state && history.state.formaCapture) { try { history.back(); } catch (e) { /* ignora */ } }
         document.body.classList.remove('cap-open');
         root.remove();
         if (previous && previous.focus) { try { previous.focus(); } catch (e) { /* ignora */ } }
         resolve(value);
       }
+      // A interface de gravação volta ao estado inicial em qualquer erro; sem isso, "Tentar de novo"
+      // deixava o botão de PARAR visível com nenhuma gravação em andamento.
+      function resetRecordingUi() {
+        root.classList.remove('is-recording');
+        recEl.hidden = true; stopBtn.hidden = true; startBtn.hidden = false; actionsLabel.textContent = 'Iniciar';
+        warnEl.hidden = true;
+      }
       function showError(message) {
         clearInterval(ticker); clearInterval(analyzer); releaseWake();
+        resetRecordingUi();
         guide.hidden = true; actions.hidden = true; review.hidden = true;
         errorBox.hidden = false; errorBox.querySelector('p').textContent = message;
         errorBox.querySelector('[data-cap-retry]').focus();
@@ -212,8 +227,8 @@ window.FormaCapture = (function () {
           root.classList.add('is-complete');
           ringLabel.innerHTML = '<b>' + icon('check', 22) + '</b><small>guia concluída</small>';
           if (elapsed >= MAX_SECONDS - 10) { instrEl.textContent = 'Limite de 3 minutos em ' + Math.max(0, Math.ceil(MAX_SECONDS - elapsed)) + ' s'; hintEl.textContent = 'A gravação será concluída automaticamente.'; }
-          else if (elapsed > MAX_RECOMMENDED) { instrEl.textContent = 'Já é suficiente — toque em Concluir'; hintEl.textContent = 'Acima de 90 s não há ganho perceptível; o serviço aceita até 3 minutos.'; }
-          else { instrEl.textContent = 'Guia concluída — pode concluir'; hintEl.textContent = 'Se quiser, faça mais uma volta lenta para reforçar detalhes (até 90 s).'; }
+          else if (elapsed > MAX_RECOMMENDED) { instrEl.textContent = 'Já é suficiente — toque em Concluir'; hintEl.textContent = 'Acima de 2 minutos não há ganho perceptível; o serviço aceita até 3.'; }
+          else { instrEl.textContent = 'Guia concluída — pode concluir'; hintEl.textContent = 'Se quiser, faça uma volta mais baixa, apontando para cima, para fechar a parte de baixo.'; }
         } else {
           ringLabel.innerHTML = '<b>' + STAGES[idx].label + '</b><small>' + (idx + 1) + ' de ' + STAGES.length + '</small>';
           instrEl.textContent = 'Mova-se lentamente ao redor do produto';
@@ -250,6 +265,16 @@ window.FormaCapture = (function () {
         }, 250);
       }
 
+      // O sistema solta o wake lock ao trocar de app; ao voltar, pede de novo se ainda está gravando.
+      function requestWake() { if (navigator.wakeLock && navigator.wakeLock.request) navigator.wakeLock.request('screen').then(function (w) { wake = w; }).catch(function () {}); }
+      function onVisible() { if (!closed && document.visibilityState === 'visible' && recorder && recorder.state === 'recording') requestWake(); }
+      document.addEventListener('visibilitychange', onVisible);
+      // Botão "voltar" do Android: fecha como o X (conclui a gravação ou cancela) em vez de perder a tela.
+      var pushedState = false;
+      try { history.pushState({ formaCapture: 1 }, ''); pushedState = true; } catch (e) { /* ignora */ }
+      function onPop() { if (closed) return; pushedState = false; if (recorder && recorder.state === 'recording') stopRecording('manual'); else close(null); }
+      window.addEventListener('popstate', onPop);
+
       // ---- gravação ----
       function makeRecorder() {
         var attempts = [{ mimeType: mime, videoBitsPerSecond: BITRATE }, { mimeType: mime }, {}];
@@ -270,7 +295,7 @@ window.FormaCapture = (function () {
         recEl.hidden = false; startBtn.hidden = true; stopBtn.hidden = false; actionsLabel.textContent = 'Concluir';
         noteEl.textContent = 'A guia avança por tempo e sugere o ritmo — não detecta a cobertura real do produto.';
         stopBtn.focus();
-        if (navigator.wakeLock && navigator.wakeLock.request) navigator.wakeLock.request('screen').then(function (w) { wake = w; }).catch(function () {});
+        requestWake();
         paint(0);
         ticker = setInterval(function () {
           var elapsed = (performance.now() - startedAt) / 1000;
@@ -288,13 +313,12 @@ window.FormaCapture = (function () {
         try { recorder.stop(); } catch (e) { finishRecording(); }
       }
       function finishRecording() {
+        if (closed) return; // fechou durante a gravação: nada de criar URL num DOM que já saiu
         if (!errorBox.hidden) return; // a falha já foi mostrada; não sobrepor com a revisão
         var actual = (recorder && recorder.mimeType) || mime;
         var container = containerOf(actual) || containerOf(mime) || 'webm';
         var blob = new Blob(chunks, { type: 'video/' + container });
-        root.classList.remove('is-recording');
-        recEl.hidden = true; stopBtn.hidden = true; startBtn.hidden = false; actionsLabel.textContent = 'Iniciar';
-        warnEl.hidden = true;
+        resetRecordingUi();
         if (!blob.size) { showError('A gravação ficou vazia. Verifique se a câmera está funcionando e tente de novo.'); return; }
         var stamp = new Date(), pad = function (n) { return String(n).padStart(2, '0'); };
         var name = 'scan-camera-' + stamp.getFullYear() + pad(stamp.getMonth() + 1) + pad(stamp.getDate()) + '-' + pad(stamp.getHours()) + pad(stamp.getMinutes()) + pad(stamp.getSeconds()) + '.' + container;

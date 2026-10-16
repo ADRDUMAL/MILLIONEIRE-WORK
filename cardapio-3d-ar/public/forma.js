@@ -766,7 +766,7 @@
       };
       $('#st-studio').value = pr.studioName; $('#st-resp').value = pr.owner;
       $('#st-signature').checked = !!pr.signature; $('#st-mask').checked = pr.isMask !== 0;
-      var qr = $('input[name="st-quality"][value="' + (pr.quality === 'standard' ? 'standard' : 'high') + '"]'); if (qr) qr.checked = true;
+      var qr = $('input[name="st-quality"][value="' + (pr.quality === 'high' ? 'high' : 'standard') + '"]'); if (qr) qr.checked = true;
       paintIdentity();
       stAccount.addEventListener('submit', function (e) {
         e.preventDefault();

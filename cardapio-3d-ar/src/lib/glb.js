@@ -7,6 +7,7 @@ const BIN_CHUNK = 0x004e4942;
 export function parseGlb(buf) {
   if (buf.length < 20 || buf.subarray(0, 4).toString('ascii') !== 'glTF') throw new Error('Não é um arquivo GLB');
   if (buf.readUInt32LE(4) !== 2) throw new Error('Versão de glTF não suportada');
+  if (buf.readUInt32LE(8) > buf.length) throw new Error('GLB truncado: o cabeçalho declara mais bytes do que o arquivo tem');
   let off = 12; let json = null; let bin = null;
   while (off + 8 <= buf.length) {
     const len = buf.readUInt32LE(off); const type = buf.readUInt32LE(off + 4);
@@ -16,7 +17,9 @@ export function parseGlb(buf) {
     off += 8 + len + ((4 - (len % 4)) % 4);
   }
   if (!json) throw new Error('GLB sem chunk JSON');
+  if (json.asset && json.asset.version && !String(json.asset.version).startsWith('2.')) throw new Error('Versão de glTF não suportada');
   if (json.buffers?.some((b) => b.uri)) throw new Error('GLB com buffers externos não é aceito');
+  if (json.buffers?.[0]?.byteLength && (!bin || bin.length < json.buffers[0].byteLength)) throw new Error('GLB com BIN truncado');
   if (json.images?.some((i) => i.uri && !i.uri.startsWith('data:'))) throw new Error('GLB com texturas externas não é aceito');
   return { json, bin };
 }

@@ -60,7 +60,11 @@ window.FormaPhotoCheck = (function () {
 
   function decode(file) {
     if (window.createImageBitmap) {
-      return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(function () { return createImageBitmap(file); })
+      // Fotos muito grandes (48 MP = ~195 MB em RGBA) derrubam a aba no iOS: pede ao decodificador que já
+      // entregue o bitmap reduzido. Se a opção não for aceita, cai para a decodificação normal.
+      var big = file.size > 8 * 1024 * 1024;
+      var first = big ? createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: T.normalizeLong, resizeQuality: 'high' }) : createImageBitmap(file, { imageOrientation: 'from-image' });
+      return first.catch(function () { return createImageBitmap(file, { imageOrientation: 'from-image' }); }).catch(function () { return createImageBitmap(file); })
         .then(function (bmp) { return { src: bmp, w: bmp.width, h: bmp.height, close: function () { try { bmp.close(); } catch (e) { /* ignora */ } } }; })
         .catch(function () { return decodeImg(file); });
     }
@@ -76,9 +80,12 @@ window.FormaPhotoCheck = (function () {
   }
 
   // Reduz para T.normalizeLong quando a foto passa do tamanho aceito, em JPEG 0,92.
+  // Só JPG, PNG e WebP seguem intactos: HEIC (Safari decodifica), GIF, BMP e TIFF são reencodados em
+  // JPEG aqui — o servidor recusaria o lote inteiro depois de um upload de centenas de MB.
+  var PASS_THROUGH = /^image\/(jpeg|png|webp)$/i;
   function normalize(file, dec) {
     var long = Math.max(dec.w, dec.h);
-    if (file.size <= T.normalizeBytes && long <= 6000) return Promise.resolve({ file: file, resized: false });
+    if (file.size <= T.normalizeBytes && long <= 6000 && PASS_THROUGH.test(file.type || '')) return Promise.resolve({ file: file, resized: false });
     var scale = Math.min(1, T.normalizeLong / long);
     var c = document.createElement('canvas');
     c.width = Math.round(dec.w * scale); c.height = Math.round(dec.h * scale);

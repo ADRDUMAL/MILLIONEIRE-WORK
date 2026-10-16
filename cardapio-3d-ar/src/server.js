@@ -17,7 +17,7 @@ const tls = process.env.HTTPS_KEY_FILE && process.env.HTTPS_CERT_FILE
 const server = tls ? https.createServer(tls, app) : app;
 const scheme = tls ? 'https' : 'http';
 
-server.listen(cfg.port, cfg.host, () => {
+const listening = server.listen(cfg.port, cfg.host, () => {
   console.log(`Cardápio 3D no ar: ${scheme}://localhost:${cfg.port}${tls ? ' (HTTPS local)' : ''}`);
   if (cfg.host === '0.0.0.0') {
     const ips = Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
@@ -28,3 +28,7 @@ server.listen(cfg.port, cfg.host, () => {
   console.log(`  Forma 3D reconstrução: ${app.locals.forma.runtime.label}${app.locals.forma.runtime.enabled ? '' : ` — ${app.locals.forma.runtime.reason}`}`);
   if (cfg.baseUrl) console.log(`  BASE_URL: ${cfg.baseUrl}`);
 });
+// 300 fotos numa conexão lenta levam mais que os 5 minutos padrão do Node (requestTimeout).
+// O limite de inatividade por requisição (req.setTimeout) continua valendo na rota de upload.
+listening.requestTimeout = Math.max(listening.requestTimeout || 0, cfg.forma.uploadTimeoutMs + 60000);
+listening.headersTimeout = Math.min(listening.headersTimeout || 60000, listening.requestTimeout - 1000);

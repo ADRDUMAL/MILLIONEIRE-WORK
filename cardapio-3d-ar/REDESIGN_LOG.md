@@ -507,3 +507,93 @@ card "Continue de onde parou" com guias de coluna; sidebar e cabeçalho do celul
 - As fontes vêm do Google Fonts (como a Instrument Sans já vinha). Para rodar 100% offline, hospedar os
   arquivos em `public/fonts/`.
 - Validar a varredura e as leituras do visor num celular real (desempenho do `<model-viewer>` com dois visores na página).
+
+---
+
+# Auditoria e endurecimento — scanner e reconstrução (16/10/2026)
+
+Pedido: "procurar erros e problemas, melhorar design e responsividade, com foco nas ferramentas de
+escanear objetos". Duas auditorias de código (front-end do scanner e pipeline server-side) mais uma
+varredura responsiva em 10 rotas × 5 larguras (360–1280 px) e um percurso real do scanner com câmera
+falsa (Playwright, `--use-fake-device-for-media-stream`, HTTPS local). `npm test`: 62/62 (9 novos).
+
+## Scanner guiado (`public/forma-guided.js`, `scanner/*.js`)
+
+Qualidade fotogramétrica — o que a captura passou a controlar:
+
+| Antes | Agora |
+| --- | --- |
+| Anel de cobertura de 68 px dentro do card | **Faixa de ângulos** sob o quadro: um segmento por setor da volta atual, posição atual (bússola) marcada, contagem "N de 24 ângulos" |
+| 16/12/8 setores (22,5° na volta principal) | **24/16/12 setores** (15°): sobreposição de 60–80 % entre vizinhas, meta de 52 fotos |
+| Só piso de repetição (foto quase igual) | **Teto de sobreposição**: salto visual acima de `T.noveltyMax` ou > 2 setores pela bússola vira aviso "volte um pouco" e marca a foto (âmbar na faixa, "Pouca sobreposição" na revisão) |
+| Exposição/foco contínuos o tempo todo | **Travar luz** (Chrome Android, quando `getCapabilities()` expõe `manual`): liga sozinho na 3ª foto aceita; AE/AWB/AF fixos = textura sem emendas. Botão para soltar |
+| — | **Luz diferente**: brilho médio > 35 % fora da mediana das fotos aceitas vira aviso e nota na revisão |
+| — | **Auto** (só com bússola): a foto sai sozinha ao apontar para um setor vazio com o aparelho parado ~500 ms |
+| Preview `object-fit: cover` (recorte) | **`contain`**: o que se vê é o que sai na foto; quadro-guia e faixa seguem a área real do vídeo |
+| Nitidez só da amostra de 160 px | **Nitidez da foto real** medida em segundo plano (`createImageBitmap` + `PC.measure`) — corrige também as dimensões da foto do sensor (antes toda foto 12 MP era marcada "baixa resolução") |
+| Fonte da foto podia alternar sensor/stream | **Uma fonte por sessão**; se o sensor falhar, a revisão avisa quais fotos saíram do preview |
+| Voltas 2 e 3 sem verificação de altura | **Inclinação (`beta`)** comparada à volta 1: orientação na hora e aviso na revisão se a volta ficou na mesma altura |
+| Toque disparava no instante do tremor | **Foto estável**: espera até 500 ms o movimento cair antes de capturar |
+| — | **Mapa de cobertura** das três voltas na revisão, com legenda N/total |
+
+Bugs corrigidos (confirmados no código): bússola misturando `deviceorientation` relativo com
+`deviceorientationabsolute` no Android (setores aleatórios); `switchTo` fechando a câmera antes de
+abrir a nova (sessão morta no iPhone); HEIC/GIF passando intactos no Safari e derrubando o lote no
+servidor (agora reencodados em JPEG); vazamento do blob de vídeo ao fechar durante a gravação; UI de
+gravação presa no botão "parar" após erro; `max: 1080` no fallback de câmera do vídeo (retrato
+608×1080); `lastLuma` velho causando "você estava se movendo" falso ao voltar da revisão; câmera
+morta não detectada ao voltar da revisão; botão "voltar" do Android perdendo todas as fotos; Esc na
+revisão descartando sem confirmar; limite de 300 fotos silencioso; cantos do quadro presos em
+vermelho após uma rejeição; volta errada quando se tocava "Próxima volta" durante a captura;
+listener `ended` perdido após trocar de lente; wake lock não readquirido; `codecLabel` injetado sem
+escape; decodificação de 3 fotos de 48 MP ao mesmo tempo (agora 1 por vez e já reduzida);
+`QuotaExceededError` do IndexedDB abortando o envio; `confirmed` com duração 0; bússola do iOS sem
+calibração aceita.
+
+Vídeo: guia de 90 s (volta completa + volta de cima inteira), 10 Mbps, recomendação 60–120 s.
+
+## Pipeline de reconstrução (`src/forma/*`, `src/routes/forma-api.js`)
+
+- **Download duplicado**: o timer e o `GET` do navegador disparavam dois downloads do mesmo ZIP e
+  gravavam dois assets. Agora há um `Set` de downloads em voo, o download roda em segundo plano (o
+  `GET` responde na hora) e `done` + asset entram numa transação.
+- **Reenvio pago por falha transitória**: erro de rede no download voltava a tarefa para "Tentar
+  novamente" (= upload novo = crédito novo). Agora volta a `processing` com backoff e baixa de novo.
+  `RESULT_INVALID` deixou de ser reenviável (as mesmas fotos dão o mesmo GLB).
+- **Histórico do `serialize`** preservado em `options_json.history` a cada tentativa (é o que o
+  suporte do KIRI pede); `calculateType` e tamanhos do ZIP/GLB vão para o log.
+- **Órfãos**: tarefas em `uploading` após reinício recomeçam o envio sozinhas (arquivos guardados) ou
+  falham com `UPLOAD_INTERRUPTED` na etapa certa.
+- **Compare-and-set** em todas as transições: cancelar durante uma consulta em voo não ressuscita a tarefa.
+- **CSRF em produção**: o admin recebia 403 em cancelar/reenviar. A API JSON exige o cabeçalho
+  `X-Requested-With: FormaStudio` + Origin igual ao host (um formulário de outro site não consegue
+  enviar); `GET`s de status/modelo também exigem admin em produção.
+- **Limites antes de receber bytes**: teto de custo e `Content-Length` checados antes do multer; dois
+  receptores (fotos ≤ 8 MB cada, vídeo ≤ 300 MB) escolhidos por `?method=`; `server.requestTimeout`
+  acompanha `FORMA_UPLOAD_TIMEOUT_MS` (o padrão de 5 min do Node derrubava uploads longos).
+- **Idempotency-Key** com entropia mínima (16 chars) e escopo por usuário/IP: outra pessoa com a
+  mesma chave não recebe a tarefa alheia.
+- **Status desconhecido do KIRI** (ausente, `null`, `7`) é resposta inválida transitória, não
+  "processando para sempre". Download não segue redirecionamentos.
+- **GLB**: cabeçalho truncado, BIN menor que o declarado, versão ≠ 2.x e modelo sem malha são recusados.
+- **Fotos inválidas no meio do lote** não derrubam o envio se sobrarem ≥ 20; o aviso lista quais.
+- **Qualidade automática**: fotos < 2000 px ou vídeo → textura 2K mesmo pedindo 4K (4K só ampliaria
+  o borrão e pesa 3× no celular), com aviso. **Padrão do cliente passou a ser 2K** (`standard`),
+  alinhado ao README.
+- Varredura de `temp/` e uploads antigos roda num timer próprio, também em modo simulado.
+- Códigos de erro que o servidor emitia sem tradução no cliente agora têm título, causa e ação.
+
+## Interface e responsividade
+
+Nenhuma das 10 rotas tem overflow horizontal em 360/390/768/1024/1280. Alvos de toque menores que
+40 px (links da nav da landing, "Entrar", "Ver todos", remover tag, hotspots, logo) cresceram por
+padding/`::before` sem mudar o desenho; texto mono abaixo de 11,5 px subiu.
+
+## Pendências
+
+- **Validar em aparelho real**: trava de exposição (Chrome Android), inclinação por `beta`, bússola
+  absoluta, `ImageCapture` + `createImageBitmap` em fotos de 48 MP.
+- `public/forma-scanner.js` (scanner antigo) continua servido e sem uso; remover quando os testes de
+  `forma-scanner.test.js` forem migrados para os módulos atuais.
+- ZIP do KIRI ainda inteiro em memória (até 400 MB); fazer streaming para disco.
+- Sem dono por tarefa fora de produção (beta por convite); se o Studio abrir ao público, criar `owner_key`.

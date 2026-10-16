@@ -124,7 +124,12 @@ export function kiriProvider(opts) {
 
     async getJobStatus(providerRef) {
       const data = await call(PATHS.status, { query: { serialize: providerRef } });
-      const providerStatus = Number(data?.status);
+      const rawStatus = data?.status;
+      const providerStatus = rawStatus == null || rawStatus === '' ? NaN : Number(rawStatus); // null viraria 0 ("processando")
+      // Status fora da tabela não vira "processando para sempre": conta como resposta inválida (transitória).
+      if (!Object.prototype.hasOwnProperty.call(KIRI_STATUS, String(providerStatus))) {
+        throw new ProviderError(`KIRI devolveu um status desconhecido (${data?.status === undefined ? 'ausente' : String(data.status).slice(0, 20)})`, { kind: 'invalid_response', temporary: true });
+      }
       const status = mapKiriStatus(providerStatus);
       return { status, providerStatus, stage: STAGE_LABEL[status], progress: null }; // KIRI não informa percentual
     },
@@ -143,9 +148,11 @@ export function kiriProvider(opts) {
     // Baixa o pacote com limite de tamanho e tempo, sem repassar o link temporário ao navegador.
     async download(url, { maxBytes, timeoutMs = 300000 } = {}) {
       let res;
-      try { res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) }); }
+      // Sem seguir redirecionamentos para hosts arbitrários: o link do KIRI aponta direto para o pacote.
+      try { res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'manual' }); }
       catch (e) { throw new ProviderError(`Download do pacote falhou (${e.name === 'TimeoutError' ? 'tempo esgotado' : 'falha de rede'})`, { temporary: true }); }
-      if (!res.ok) throw new ProviderError(`Download do pacote falhou: HTTP ${res.status}`, { temporary: res.status >= 500 });
+      if (res.status >= 300 && res.status < 400) throw new ProviderError('Download do pacote redirecionou para outro endereço; recusado por segurança');
+      if (!res.ok) throw new ProviderError(`Download do pacote falhou: HTTP ${res.status}`, { temporary: res.status >= 500 || res.status === 429 });
       const len = Number(res.headers.get('content-length') || 0);
       if (maxBytes && len > maxBytes) throw new ProviderError(`Pacote com ${(len / 1e6).toFixed(0)} MB excede o limite`);
       const chunks = []; let total = 0;
