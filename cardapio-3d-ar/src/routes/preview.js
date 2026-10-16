@@ -27,61 +27,101 @@ function loadProduct(req, res, next) {
 }
 
 // ---------- Landing (só para visitante anônimo; usuário logado segue para /app ou /admin) ----------
+// Redesign 16/10/2026 — referências visuais KYMA e Conicorn. Hero escuro com guias de coluna e um
+// visor de captura: o modelo gira entre cantoneiras e as leituras (azimute, elevação) vêm da câmera
+// real do <model-viewer>. Nenhum número de mercado inventado: só fatos do produto.
+const byslug = (slug) => PRODUCTS.find((p) => p.slug === slug);
+const SECTORS = [
+  { key: 'restaurantes', name: 'Restaurantes', text: 'O prato em 3D no cardápio que abre pelo QR da mesa.', tags: ['Cardápio por QR', 'Prato em 3D', 'AR na mesa'], model: '/static/samples/prato-exemplo.glb', orbit: '25deg 62deg 105%', label: 'Prato de exemplo' },
+  { key: 'mobiliario', name: 'Mobiliário', text: 'Acabamento, tecido e proporção à vista.', tags: ['Medidas reais', 'Ver no ambiente'], product: byslug('cadeira-horizonte') },
+  { key: 'calcados', name: 'Calçados', text: 'Cada costura, de qualquer ângulo.', tags: ['Giro 360°', 'Zoom no detalhe'], product: byslug('tenis-fluxo') },
+  { key: 'utilidades', name: 'Utilidades e decoração', text: 'Textura e esmalte como são.', tags: ['Material', 'Página pública'], product: byslug('caneca-origens') },
+].map((x) => (x.product ? { ...x, model: x.product.model, orbit: x.product.cameraOrbit, label: x.product.name } : x));
+const words = (text) => text.split(' ').map((w) => html`<span class="w">${w}</span> `);
+const ctaBar = ({ label, href, ghost = false }) => html`<a class="lx-bar${ghost ? ' lx-bar-ghost' : ''}" href="${href}"><span>${label}</span>${icon('arrow', 18)}</a>`;
+
 r.get('/', (req, res, next) => {
   if (req.user) return next();
   const hero = PRODUCTS[0];
-  res.send(doc({ title: 'Transforme produtos reais em experiências 3D', viewer: true, cls: 'landing', body: html`
-    <header class="lp-nav">
-      ${brand()}
-      <nav class="lp-links" aria-label="Seções"><a href="#como-funciona">Como funciona</a><a href="#setores">Setores</a><a href="/p/${hero.slug}">Exemplo público</a></nav>
-      <div class="lp-nav-actions"><a class="btn btn-ghost" href="/entrar">Entrar</a>${button({ label: 'Criar modelo 3D', href: '/studio/produtos/novo', kind: 'primary' })}</div>
+  const dims = hero.dimensions ? `${[hero.dimensions.width, hero.dimensions.height, hero.dimensions.depth].map((n) => String(n).replace('.', ',')).join('×')} cm` : '—';
+  const first = SECTORS[0];
+  res.send(doc({ title: 'Transforme produtos reais em experiências 3D', viewer: true, cls: 'landing lx', body: html`
+    <header class="lx-nav">
+      ${brand('brand-dark')}
+      <nav class="lx-links" aria-label="Seções"><a href="#como-funciona">Como funciona</a><a href="#setores">Setores</a><a href="/p/${hero.slug}">Exemplo público</a></nav>
+      <div class="lx-nav-actions"><a class="lx-login" href="/entrar">Entrar</a>${ctaBar({ label: 'Criar modelo 3D', href: '/studio/produtos/novo' })}</div>
     </header>
     <main>
-      <section class="lp-hero">
-        <div class="lp-copy">
-          <p class="eyebrow">Plataforma 3D para empresas</p>
-          <h1><span>Transforme produtos</span> <span>reais em</span> <span class="lp-h1-accent">experiências&nbsp;3D</span></h1>
-          <p class="lead">Fotografe com o celular. A Forma 3D cria o modelo, você publica com um link.</p>
-          <div class="lp-cta">${button({ label: 'Criar modelo 3D', href: '/studio/produtos/novo', kind: 'primary', size: 'lg', iconName: 'arrow' })}${button({ label: 'Ver demonstração', href: '/studio', kind: 'secondary', size: 'lg' })}</div>
-          <ul class="lp-proofs">
-            <li>${icon('eye', 18)}<span>Mais compreensão</span></li>
-            <li>${icon('sparkle', 18)}<span>Experiência premium</span></li>
-            <li>${icon('share', 18)}<span>Pronto para compartilhar</span></li>
+      <section class="lx-hero" aria-labelledby="lx-h1">
+        <p class="lx-tag">Do celular ao 3D</p>
+        <h1 class="lx-h1" id="lx-h1">Transforme produtos reais em experiências <span class="lx-accent">[3D]</span></h1>
+        <div class="lx-hero-copy">
+          <p class="lx-lead"><b>Fotografe com o celular.</b> A Forma 3D constrói o modelo e você publica com um link — na web, no QR Code e em realidade aumentada.</p>
+          <div class="lx-cta">${ctaBar({ label: 'Criar modelo 3D', href: '/studio/produtos/novo' })}${ctaBar({ label: 'Ver demonstração', href: '/studio', ghost: true })}</div>
+          <ul class="lx-includes" aria-label="Cada modelo publicado inclui">
+            ${['Página pública com o modelo 3D', 'Realidade aumentada no celular', 'Link e QR Code permanentes'].map((x) => html`<li>${icon('check', 16)}<span>${x}</span></li>`)}
           </ul>
         </div>
-        <div class="lp-stage">
-          <div class="lp-stage-bg" aria-hidden="true"></div>
-          <model-viewer class="lp-viewer" src="${hero.model}?v=${ASSET_V}" alt="${hero.name} em 3D" camera-controls disable-zoom auto-rotate auto-rotate-delay="800" rotation-per-second="18deg" interaction-prompt="none" camera-orbit="${hero.cameraOrbit}" shadow-intensity="1.3" shadow-softness="0.8" exposure="1.05" loading="eager"></model-viewer>
-          <div class="lp-note" aria-hidden="true"><svg width="72" height="46" viewBox="0 0 72 46" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 42c18-6 34-22 60-30"/><path d="m56 6 10 4-6 9"/></svg><span>arraste para girar</span></div>
-          <div class="lp-chip">${icon('cube', 16)}<span>${hero.name}</span><em>3D · AR · Web</em></div>
-        </div>
+        <figure class="lx-finder" data-finder>
+          <div class="lx-finder-head"><span class="lx-dot" aria-hidden="true"></span><span data-finder-state>Carregando modelo</span><span class="lx-finder-name">${hero.name}</span></div>
+          <div class="lx-finder-stage">
+            <span class="lx-corner lx-c1" aria-hidden="true"></span><span class="lx-corner lx-c2" aria-hidden="true"></span><span class="lx-corner lx-c3" aria-hidden="true"></span><span class="lx-corner lx-c4" aria-hidden="true"></span>
+            <span class="lx-scan" aria-hidden="true"></span>
+            <model-viewer class="lx-mv" src="${hero.model}?v=${ASSET_V}" alt="${hero.name} em 3D. Arraste para girar." camera-controls disable-zoom auto-rotate auto-rotate-delay="1200" rotation-per-second="16deg" interaction-prompt="none" camera-orbit="${hero.cameraOrbit}" shadow-intensity="1.2" shadow-softness="0.9" exposure="1.05" loading="eager"></model-viewer>
+          </div>
+          <dl class="lx-readout">
+            <div><dt>Azimute</dt><dd data-ro="az">—</dd></div>
+            <div><dt>Elevação</dt><dd data-ro="el">—</dd></div>
+            <div><dt>Medidas</dt><dd>${dims}</dd></div>
+            <div><dt>Formatos</dt><dd>GLB · USDZ</dd></div>
+          </dl>
+          <figcaption class="lx-finder-cap">Arraste para girar</figcaption>
+        </figure>
       </section>
 
-      <section class="lp-steps" id="como-funciona">
-        <div class="section-head"><p class="eyebrow">Como funciona</p><h2>Três passos, sem conhecimento técnico</h2></div>
-        <ol class="steps3">
-          <li><span class="step-big">1</span><h3>Adicione fotos ou um vídeo</h3><p>Fotografe o produto de diferentes ângulos com o celular ou envie arquivos que já tem.</p></li>
-          <li><span class="step-big">2</span><h3>Acompanhe a construção do modelo</h3><p>O modelo 3D é construído a partir das imagens; você acompanha cada etapa.</p></li>
-          <li><span class="step-big">3</span><h3>Publique e compartilhe</h3><p>Revise, adicione informações e compartilhe por link ou incorpore no seu site.</p></li>
+      <ul class="lx-strip" aria-label="Onde o modelo abre">
+        ${['Navegador', 'Android · Scene Viewer', 'iPhone · Quick Look', 'QR Code', 'Link', 'Incorporar no site'].map((x) => html`<li>${x}</li>`)}
+      </ul>
+
+      <section class="lx-how" id="como-funciona" aria-labelledby="lx-how-h">
+        <p class="lx-tag lx-tag-ink">Como funciona</p>
+        <h2 class="lx-statement" id="lx-how-h" data-reveal>${words('Uma foto mostra um lado. Um modelo 3D mostra o produto inteiro — e cabe num link.')}</h2>
+        <p class="lx-steps-note">Três etapas, sem conhecimento técnico.</p>
+        <ol class="lx-steps">
+          <li><span class="lx-step-n">01</span><h3>Capture</h3><p>Fotos ou vídeo 360° pelo celular, com um guia na tela para cada ângulo.</p><p class="lx-fact">20–300 fotos · vídeo até 3 min</p></li>
+          <li><span class="lx-step-n">02</span><h3>Construa</h3><p>O modelo é montado a partir das imagens. Você acompanha cada etapa e pode fechar a tela.</p><p class="lx-fact">Status real · sem percentual inventado</p></li>
+          <li><span class="lx-step-n">03</span><h3>Publique</h3><p>Revise nome, medidas e materiais e compartilhe por link, QR Code ou no seu site.</p><p class="lx-fact">Web · QR · Realidade aumentada</p></li>
         </ol>
       </section>
 
-      <section class="lp-sectors" id="setores">
-        <div class="section-head"><p class="eyebrow">Para qualquer produto físico</p><h2>Móveis, calçados, equipamentos, embalagens e mais</h2></div>
-        <ul class="sector-feature">
-          ${[['chair', 'Mobiliário', 'Acabamento, tecido e proporção à vista.'], ['sneaker', 'Calçados', 'Cada costura, de qualquer ângulo.'], ['mug', 'Utilidades e decoração', 'Textura e esmalte como são.'], ['', 'Produtos industriais', 'Peças e conexões para catálogo técnico.']]
-            .map(([il, t, d]) => html`<li><span class="sector-art" aria-hidden="true">${il ? illo(il) : icon('cube', 40)}</span><b>${t}</b><small>${d}</small></li>`)}
-        </ul>
-        <details class="sector-more"><summary>Ver mais setores</summary><ul class="sector-list">${['Embalagens', 'Equipamentos', 'Objetos de consumo', 'Alimentos', 'Brinquedos', 'Ferramentas'].map((x) => html`<li>${x}</li>`)}</ul></details>
+      <section class="lx-sectors" id="setores" aria-labelledby="lx-sectors-h">
+        <div class="lx-sectors-head"><p class="lx-tag">Setores</p><h2 id="lx-sectors-h">Um modelo para cada produto físico.</h2></div>
+        <div class="lx-sectors-body">
+          <div class="lx-table">
+            <div class="lx-thead" aria-hidden="true"><span>Setor</span><span>O que o cliente vê</span></div>
+            <div role="tablist" aria-label="Setores" aria-orientation="vertical" data-sector-tabs>
+              ${SECTORS.map((x, i) => html`<button class="lx-row" type="button" role="tab" id="lx-tab-${x.key}" aria-controls="lx-sector-view" aria-selected="${i === 0 ? 'true' : 'false'}" tabindex="${i === 0 ? '0' : '-1'}" data-model="${x.model}?v=${ASSET_V}" data-orbit="${x.orbit}" data-label="${x.label}">
+                <span class="lx-row-name">${x.name}</span>
+                <span class="lx-row-text">${x.text}</span>
+                <span class="lx-row-tags">${x.tags.map((t) => html`<em>${t}</em>`)}</span>
+              </button>`)}
+            </div>
+          </div>
+          <div class="lx-sector-view" id="lx-sector-view" role="tabpanel" aria-labelledby="lx-tab-${first.key}">
+            <model-viewer class="lx-mv" data-sector-mv src="${first.model}?v=${ASSET_V}" alt="${first.label} em 3D. Arraste para girar." camera-controls disable-zoom auto-rotate rotation-per-second="18deg" interaction-prompt="none" camera-orbit="${first.orbit}" shadow-intensity="1" exposure="1.1" loading="lazy"></model-viewer>
+            <p class="lx-sector-cap"><span data-sector-label>${first.label}</span><span>Arraste para girar</span></p>
+          </div>
+        </div>
+        <p class="lx-more">Também: produtos industriais · embalagens · equipamentos · brinquedos · ferramentas</p>
       </section>
 
-      <section class="lp-final">
-        <div class="lp-final-copy"><h2>Seu primeiro produto em 3D ainda hoje.</h2><p>Trinta fotos com o celular. Nós cuidamos do resto.</p></div>
-        <model-viewer class="lp-final-mv" src="${PRODUCTS[2].model}?v=${ASSET_V}" alt="${PRODUCTS[2].name} em 3D" camera-orbit="${PRODUCTS[2].cameraOrbit}" auto-rotate rotation-per-second="20deg" disable-zoom interaction-prompt="none" camera-controls loading="lazy" shadow-intensity="1" exposure="1.1" aria-hidden="true" tabindex="-1"></model-viewer>
-        ${button({ label: 'Criar modelo 3D', href: '/studio/produtos/novo', kind: 'primary', size: 'lg', iconName: 'arrow' })}
+      <section class="lx-final" aria-labelledby="lx-final-h">
+        <p class="lx-tag lx-tag-ink">Comece agora</p>
+        <h2 id="lx-final-h">Seu primeiro produto em 3D ainda hoje.</h2>
+        <div class="lx-final-row"><p>Trinta fotos com o celular. Nós cuidamos do resto.</p>${ctaBar({ label: 'Criar modelo 3D', href: '/studio/produtos/novo' })}</div>
       </section>
     </main>
-    <footer class="lp-foot"><span>Forma 3D · preview</span><a href="/entrar">Acesso ao painel de restaurantes (beta)</a></footer>` }));
+    <footer class="lx-foot"><span>Forma 3D · preview</span><a href="/entrar">Acesso ao painel de restaurantes (beta)</a></footer>` }));
 });
 
 // ---------- Dashboard ----------

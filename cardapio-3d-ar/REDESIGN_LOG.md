@@ -460,3 +460,50 @@ Data: 25/09/2026. Validado com `npm run dev:safe` (KIRI falso). **Nenhum crédit
 - Converter vídeo HEVC no servidor exigiria ffmpeg. Hoje, HEVC só passa quando o navegador decodifica
   (Safari/iPhone) ou quando cabe no envio direto.
 - A cobertura sem bússola é estimada pela contagem de fotos, e a tela diz isso.
+
+---
+
+# Redesign visual — referências KYMA e Conicorn (16/10/2026)
+
+Pedido: usar [kyma.framer.ai](https://kyma.framer.ai) e [conicorn.framer.ai](https://conicorn.framer.ai) como
+referência visual para a landing e para a interface do Studio. Só apresentação mudou: nenhuma rota,
+fluxo, store, backend ou teste foi alterado (`npm test`: 53/53).
+
+## Linguagem
+
+| Elemento | Decisão |
+| --- | --- |
+| Display | **Archivo** expandida (wdth 112, peso 800), caixa-alta — ecoa o wordmark pesado do logo e o título da KYMA |
+| Utilitária | **JetBrains Mono** para rótulos `[ assim ]_`, leituras, estados e etiquetas |
+| Corpo | Instrument Sans (sem mudança) |
+| Cor | Paleta da marca mantida; novo `--f3d-night` (#072A22) para hero, setores, sidebar e card de retomada |
+| Estrutura | Guias de coluna (KYMA) desenhadas no fundo com `background-origin: content-box`, 4 colunas no desktop |
+| Forma | O canto cortado a 45° do símbolo (`--cut`) vira a forma dos botões da landing e das etiquetas de estado |
+
+## Landing (`r.get('/')` em `src/routes/preview.js`, classes `lx-*`)
+
+- **Hero escuro** com título em toda a largura e **visor de captura** (elemento-assinatura): cantoneiras,
+  linha de varredura que passa uma vez quando o GLB termina de carregar, e leituras de **azimute e elevação
+  vindas da câmera real** do `<model-viewer>` (evento `camera-change`). Medidas e formatos vêm de `data.js`.
+- **Faixa de compatibilidade** no lugar de logos de clientes: navegador, Android/Scene Viewer, iPhone/Quick Look, QR, link, incorporação.
+- **Como funciona**: frase-manifesto que acende palavra a palavra com o scroll (desligada com movimento
+  reduzido ou sem JS — a frase aparece inteira) e as três etapas alinhadas às colunas, cada uma com um fato.
+- **Setores** como tabela de abas (`role="tablist"`, setas/Home/End) que troca o modelo do visor ao lado.
+  Restaurantes entrou como primeiro setor, com o `samples/prato-exemplo.glb`.
+- **Chamada final** no estilo "let's get started" e rodapé em mono.
+- O CSS da landing antiga (`lp-*`, `steps3`, `sector-*`) foi removido.
+
+Nenhum número de mercado foi inventado: os dados da página são fatos do produto (20–300 fotos, vídeo até
+3 min, GLB/USDZ, AR) e leituras reais do visualizador.
+
+## Studio
+
+Títulos de página e do editor em display caixa-alta; métricas com números em display e rótulos em mono;
+cabeçalhos de seção como `[ PRODUTOS RECENTES ]`; estados (`.pill`) como etiquetas mono com o canto da marca;
+card "Continue de onde parou" com guias de coluna; sidebar e cabeçalho do celular em `--f3d-night`.
+
+## Pendências
+
+- As fontes vêm do Google Fonts (como a Instrument Sans já vinha). Para rodar 100% offline, hospedar os
+  arquivos em `public/fonts/`.
+- Validar a varredura e as leituras do visor num celular real (desempenho do `<model-viewer>` com dois visores na página).

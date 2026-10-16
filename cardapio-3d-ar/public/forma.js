@@ -917,4 +917,66 @@
       });
     });
   }
+
+  // ---------- Landing: visor de captura ----------
+  // As leituras são a câmera real do <model-viewer>; o estado só vira "Modelo pronto" no evento load.
+  var finder = $('[data-finder]');
+  if (finder) {
+    var fmv = $('model-viewer', finder), az = $('[data-ro="az"]', finder), el = $('[data-ro="el"]', finder), fstate = $('[data-finder-state]', finder);
+    var deg = function (rad) { return Math.round(((rad * 180 / Math.PI) % 360 + 360) % 360); };
+    var readout = function () {
+      var o = fmv.getCameraOrbit ? fmv.getCameraOrbit() : null; if (!o) return;
+      az.textContent = String(deg(o.theta)).padStart(3, '0') + '°';
+      el.textContent = String(deg(o.phi)).padStart(2, '0') + '°';
+    };
+    fmv.addEventListener('camera-change', readout);
+    fmv.addEventListener('load', function () { readout(); fstate.textContent = 'Modelo pronto'; finder.classList.add('is-ready'); });
+    fmv.addEventListener('error', function () { fstate.textContent = 'Não foi possível abrir o modelo'; });
+  }
+
+  // ---------- Landing: frase que acende conforme a leitura ----------
+  // Sem JS ou com movimento reduzido a frase aparece inteira; o efeito só liga quando pode rodar.
+  var statement = $('[data-reveal]');
+  if (statement && !reduced && 'requestAnimationFrame' in window) {
+    var ws = $$('.w', statement), ticking = false;
+    statement.classList.add('is-armed');
+    var paint = function () {
+      ticking = false;
+      var r = statement.getBoundingClientRect(), vh = window.innerHeight;
+      var p = Math.min(1, Math.max(0, (vh * 0.85 - r.top) / (r.height + vh * 0.35)));
+      var on = Math.round(p * ws.length);
+      ws.forEach(function (w, i) { w.classList.toggle('is-on', i < on); });
+    };
+    window.addEventListener('scroll', function () { if (!ticking) { ticking = true; requestAnimationFrame(paint); } }, { passive: true });
+    paint();
+  }
+
+  // ---------- Landing: setores trocam o modelo do visor ----------
+  var tabs = $('[data-sector-tabs]');
+  if (tabs) {
+    var smv = $('[data-sector-mv]'), slabel = $('[data-sector-label]'), panel = $('#lx-sector-view');
+    var rows = $$('[role="tab"]', tabs);
+    var select = function (row, focus) {
+      rows.forEach(function (x) { var on = x === row; x.setAttribute('aria-selected', on ? 'true' : 'false'); x.tabIndex = on ? 0 : -1; });
+      if (smv.getAttribute('src') !== row.getAttribute('data-model')) {
+        smv.setAttribute('camera-orbit', row.getAttribute('data-orbit'));
+        smv.setAttribute('src', row.getAttribute('data-model'));
+      }
+      slabel.textContent = row.getAttribute('data-label');
+      smv.setAttribute('alt', row.getAttribute('data-label') + ' em 3D. Arraste para girar.');
+      panel.setAttribute('aria-labelledby', row.id);
+      if (focus) row.focus();
+    };
+    rows.forEach(function (row, i) {
+      row.addEventListener('click', function () { select(row, false); });
+      row.addEventListener('keydown', function (e) {
+        var k = e.key, n = rows.length, to = null;
+        if (k === 'ArrowDown' || k === 'ArrowRight') to = rows[(i + 1) % n];
+        else if (k === 'ArrowUp' || k === 'ArrowLeft') to = rows[(i - 1 + n) % n];
+        else if (k === 'Home') to = rows[0];
+        else if (k === 'End') to = rows[n - 1];
+        if (to) { e.preventDefault(); select(to, true); }
+      });
+    });
+  }
 })();
