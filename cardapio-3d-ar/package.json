@@ -1,0 +1,29 @@
+{
+  "name": "cardapio-3d-ar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed:admin": "node scripts/seed-admin.js",
+    "seed:demo": "node scripts/seed-demo.js",
+    "backup": "node scripts/backup.js",
+    "qr": "node scripts/print-qr.js",
+    "test": "node --test test/*.test.js",
+    "kiri:live": "node scripts/kiri-live-test.js",
+    "dev:safe": "node scripts/dev-safe.js",
+    "cert": "node scripts/make-dev-cert.js",
+    "start:https": "node scripts/start-https.js",
+    "dev:safe:http": "node scripts/dev-safe.js --http"
+  },
+  "dependencies": {
+    "@google/model-viewer": "^4.1.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "qrcode": "^1.5.4"
+  }
+}

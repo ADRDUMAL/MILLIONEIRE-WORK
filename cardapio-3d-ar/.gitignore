@@ -1,0 +1,9 @@
+node_modules/
+data/
+backups/
+.env
+*.log
+desktop.ini
+preview-qr.png
+# Forma 3D (Fase 3B): uploads, ZIPs temporários e modelos baixados nunca vão para o Git
+data/forma/

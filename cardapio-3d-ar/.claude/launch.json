@@ -1,0 +1,32 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cardapio",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--watch",
+        "src/server.js"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "cardapio-safe",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/dev-safe.js"
+      ],
+      "port": 3001
+    },
+    {
+      "name": "cardapio-safe-http",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/dev-safe.js",
+        "--http"
+      ],
+      "port": 3001,
+      "autoPort": true
+    }
+  ]
+}
