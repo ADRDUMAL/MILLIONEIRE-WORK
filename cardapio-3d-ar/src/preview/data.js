@@ -24,6 +24,7 @@ export const STATUS = {
 export const PRODUCTS = [
   {
     slug: 'caneca-origens',
+    poster: '/static/posters/caneca-origens.png',
     name: 'Caneca Origens',
     category: 'Utilidades domésticas',
     brand: 'Estúdio Norte',
@@ -46,6 +47,7 @@ export const PRODUCTS = [
   },
   {
     slug: 'cadeira-horizonte',
+    poster: '/static/posters/cadeira-horizonte.png',
     name: 'Cadeira Horizonte',
     category: 'Mobiliário',
     brand: 'Estúdio Norte',
@@ -68,6 +70,7 @@ export const PRODUCTS = [
   },
   {
     slug: 'tenis-fluxo',
+    poster: '/static/posters/tenis-fluxo.png',
     name: 'Tênis Fluxo',
     category: 'Calçados',
     brand: 'Estúdio Norte',

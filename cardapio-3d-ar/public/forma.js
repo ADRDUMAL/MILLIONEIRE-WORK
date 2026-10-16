@@ -951,6 +951,46 @@
     paint();
   }
 
+  // ---------- Cards de produto: o modelo gira ao passar o mouse (só com mouse de verdade) ----------
+  // O render estático continua embaixo; o <model-viewer> entra por cima e sai ao tirar o mouse.
+  var canHover = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  if (canHover && window.customElements) {
+    $$('.pcard-media[data-model]').forEach(function (m) {
+      var mv = null, leaveTimer = null;
+      m.addEventListener('mouseenter', function () {
+        clearTimeout(leaveTimer);
+        if (mv || !window.customElements.get('model-viewer')) return;
+        mv = document.createElement('model-viewer');
+        mv.className = 'pcard-spin';
+        mv.setAttribute('src', m.getAttribute('data-model'));
+        if (m.getAttribute('data-orbit')) mv.setAttribute('camera-orbit', m.getAttribute('data-orbit'));
+        mv.setAttribute('auto-rotate', ''); mv.setAttribute('rotation-per-second', '30deg'); mv.setAttribute('auto-rotate-delay', '0');
+        mv.setAttribute('interaction-prompt', 'none'); mv.setAttribute('disable-zoom', ''); mv.setAttribute('disable-pan', '');
+        mv.setAttribute('shadow-intensity', '1'); mv.setAttribute('exposure', '1.05'); mv.setAttribute('environment-image', 'neutral');
+        mv.setAttribute('aria-hidden', 'true'); mv.tabIndex = -1;
+        mv.addEventListener('load', function () { m.classList.add('is-spinning'); });
+        m.appendChild(mv);
+      });
+      m.addEventListener('mouseleave', function () {
+        leaveTimer = setTimeout(function () { if (mv) { mv.remove(); mv = null; } m.classList.remove('is-spinning'); }, 120);
+      });
+    });
+  }
+
+  // ---------- Landing: seções aparecem conforme entram na tela ----------
+  var lx = document.body.classList.contains('lx') ? document.body : null;
+  if (lx) {
+    lx.classList.add('js');
+    var toReveal = $$('[data-reveal-in]');
+    if (reduced || !('IntersectionObserver' in window)) toReveal.forEach(function (el) { el.classList.add('is-in'); });
+    else {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('is-in'); io.unobserve(en.target); } });
+      }, { rootMargin: '0px 0px -8% 0px', threshold: 0.12 });
+      toReveal.forEach(function (el) { io.observe(el); });
+    }
+  }
+
   // ---------- Landing: setores trocam o modelo do visor ----------
   var tabs = $('[data-sector-tabs]');
   if (tabs) {

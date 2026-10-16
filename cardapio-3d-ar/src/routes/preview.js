@@ -5,7 +5,7 @@ import { Router } from 'express';
 import { html, raw } from '../html.js';
 import { ACCOUNT, PRODUCTS, ACTIVITY, PROCESSING_STEPS, CAPTURE_TIPS, STATUS, findProduct } from '../preview/data.js';
 import { qrSvg } from '../lib/util.js';
-import { ASSET_V, DEFAULT_SCRIPTS, doc, shell, brand, icon, illo, statusPill, button, iconButton, productCard, productRow, metric, stepper, emptyState, simNote } from '../preview/ui.js';
+import { ASSET_V, DEFAULT_SCRIPTS, doc, shell, brand, icon, illo, media, statusPill, button, iconButton, productCard, productRow, metric, stepper, emptyState, simNote } from '../preview/ui.js';
 
 const r = Router();
 const fmt = (n) => Number(n).toLocaleString('pt-BR');
@@ -27,9 +27,10 @@ function loadProduct(req, res, next) {
 }
 
 // ---------- Landing (só para visitante anônimo; usuário logado segue para /app ou /admin) ----------
-// Redesign 16/10/2026 — referências visuais KYMA e Conicorn. Hero escuro com guias de coluna e um
-// visor de captura: o modelo gira entre cantoneiras e as leituras (azimute, elevação) vêm da câmera
-// real do <model-viewer>. Nenhum número de mercado inventado: só fatos do produto.
+// Redesign 16/10/2026 (v2) — referências visuais KYMA e Conicorn. Tudo na página é fato do produto
+// ou o próprio produto rodando: o visor lê a câmera real do <model-viewer>, os passos usam os
+// gráficos da captura e do processamento, a seção do cliente abre a página pública de verdade num
+// telefone e o QR é gerado para este servidor. Nenhum número de mercado inventado.
 const byslug = (slug) => PRODUCTS.find((p) => p.slug === slug);
 const SECTORS = [
   { key: 'restaurantes', name: 'Restaurantes', text: 'O prato em 3D no cardápio que abre pelo QR da mesa.', tags: ['Cardápio por QR', 'Prato em 3D', 'AR na mesa'], model: '/static/samples/prato-exemplo.glb', orbit: '25deg 62deg 105%', label: 'Prato de exemplo' },
@@ -38,19 +39,40 @@ const SECTORS = [
   { key: 'utilidades', name: 'Utilidades e decoração', text: 'Textura e esmalte como são.', tags: ['Material', 'Página pública'], product: byslug('caneca-origens') },
 ].map((x) => (x.product ? { ...x, model: x.product.model, orbit: x.product.cameraOrbit, label: x.product.name } : x));
 const words = (text) => text.split(' ').map((w) => html`<span class="w">${w}</span> `);
-const ctaBar = ({ label, href, ghost = false }) => html`<a class="lx-bar${ghost ? ' lx-bar-ghost' : ''}" href="${href}"><span>${label}</span>${icon('arrow', 18)}</a>`;
+const ctaBar = ({ label, href, ghost = false, cls = '' }) => html`<a class="lx-bar${ghost ? ' lx-bar-ghost' : ''}${cls ? ` ${cls}` : ''}" href="${href}"><span>${label}</span>${icon('arrow', 18)}</a>`;
+// Gráficos dos passos: a faixa de ângulos da captura, as etapas reais do processamento e o que a
+// publicação entrega. São a interface do produto em miniatura, não ilustração.
+const artCapture = () => html`<div class="lx-art lx-art-capture" aria-hidden="true">
+  <span class="lx-art-corner tl"></span><span class="lx-art-corner tr"></span><span class="lx-art-corner bl"></span><span class="lx-art-corner br"></span>
+  <img class="lx-art-model" src="/static/posters/caneca-origens.png?v=${ASSET_V}" alt="" width="1200" height="900" loading="lazy" decoding="async">
+  <div class="lx-art-strip">${Array.from({ length: 24 }, (_, i) => html`<i class="${i < 14 ? 'is-on' : ''}"></i>`)}</div>
+  <p class="lx-art-cap"><span><b>14</b> de 24 ângulos</span><span>Volta 1</span></p>
+</div>`;
+const artBuild = () => html`<div class="lx-art lx-art-build" aria-hidden="true">
+  <ol>${[['Enviando imagens', 'done'], ['Verificando captura', 'done'], ['Reconstruindo geometria', 'done'], ['Criando textura', 'live'], ['Preparando modelo', '']].map(([t, st]) => html`<li class="${st ? `is-${st}` : ''}"><span class="lx-art-dot">${st === 'done' ? icon('check', 12) : ''}</span>${t}</li>`)}</ol>
+  <p class="lx-art-cap"><span>Status real do serviço</span><span>sem % inventado</span></p>
+</div>`;
+const artPublish = () => html`<div class="lx-art lx-art-publish" aria-hidden="true">
+  <div class="lx-art-link">${icon('link', 14)}<span>forma3d.app/p/caneca-origens</span></div>
+  <div class="lx-art-tags"><em>Web</em><em>QR Code</em><em>AR · iPhone e Android</em><em>Incorporar</em></div>
+  <p class="lx-art-cap"><span>GLB · USDZ</span><span>Link permanente</span></p>
+</div>`;
 
-r.get('/', (req, res, next) => {
+r.get('/', async (req, res, next) => {
   if (req.user) return next();
   const hero = PRODUCTS[0];
   const dims = hero.dimensions ? `${[hero.dimensions.width, hero.dimensions.height, hero.dimensions.depth].map((n) => String(n).replace('.', ',')).join('×')} cm` : '—';
   const first = SECTORS[0];
+  const base = (req.app.locals.cfg?.baseUrl || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+  const demoUrl = `${base}/p/${hero.slug}`;
+  let qr = '';
+  try { qr = await qrSvg(demoUrl); } catch { qr = ''; }
   res.send(doc({ title: 'Transforme produtos reais em experiências 3D', viewer: true, cls: 'landing lx', body: html`
-    <header class="lx-nav">
+    <header class="lx-nav-wrap"><nav class="lx-nav" aria-label="Principal">
       ${brand('brand-dark')}
-      <nav class="lx-links" aria-label="Seções"><a href="#como-funciona">Como funciona</a><a href="#setores">Setores</a><a href="/p/${hero.slug}">Exemplo público</a></nav>
-      <div class="lx-nav-actions"><a class="lx-login" href="/entrar">Entrar</a>${ctaBar({ label: 'Criar modelo 3D', href: '/studio/produtos/novo' })}</div>
-    </header>
+      <div class="lx-links"><a href="#como-funciona">Como funciona</a><a href="#setores">Setores</a><a href="#cliente">Para o cliente</a></div>
+      <div class="lx-nav-actions"><a class="lx-login" href="/entrar">Entrar</a>${ctaBar({ label: 'Criar modelo 3D', href: '/studio/produtos/novo', cls: 'lx-bar-sm' })}</div>
+    </nav></header>
     <main>
       <section class="lx-hero" aria-labelledby="lx-h1">
         <p class="lx-tag">Do celular ao 3D</p>
@@ -86,18 +108,18 @@ r.get('/', (req, res, next) => {
       <section class="lx-how" id="como-funciona" aria-labelledby="lx-how-h">
         <p class="lx-tag lx-tag-ink">Como funciona</p>
         <h2 class="lx-statement" id="lx-how-h" data-reveal>${words('Uma foto mostra um lado. Um modelo 3D mostra o produto inteiro — e cabe num link.')}</h2>
-        <p class="lx-steps-note">Três etapas, sem conhecimento técnico.</p>
+        <p class="lx-steps-note" data-reveal-in>Três etapas, sem conhecimento técnico.</p>
         <ol class="lx-steps">
-          <li><span class="lx-step-n">01</span><h3>Capture</h3><p>Fotos ou vídeo 360° pelo celular, com um guia na tela para cada ângulo.</p><p class="lx-fact">20–300 fotos · vídeo até 3 min</p></li>
-          <li><span class="lx-step-n">02</span><h3>Construa</h3><p>O modelo é montado a partir das imagens. Você acompanha cada etapa e pode fechar a tela.</p><p class="lx-fact">Status real · sem percentual inventado</p></li>
-          <li><span class="lx-step-n">03</span><h3>Publique</h3><p>Revise nome, medidas e materiais e compartilhe por link, QR Code ou no seu site.</p><p class="lx-fact">Web · QR · Realidade aumentada</p></li>
+          <li data-reveal-in>${artCapture()}<span class="lx-step-n">01</span><h3>Capture</h3><p>Fotos ou vídeo pelo celular, com um guia na tela para cada ângulo. A captura recusa foto escura ou tremida na hora.</p><p class="lx-fact">20–300 fotos · 3 voltas · vídeo até 3 min</p></li>
+          <li data-reveal-in>${artBuild()}<span class="lx-step-n">02</span><h3>Construa</h3><p>O modelo é montado a partir das imagens. Você acompanha cada etapa e pode fechar a tela.</p><p class="lx-fact">Textura 2K ou 4K · status real</p></li>
+          <li data-reveal-in>${artPublish()}<span class="lx-step-n">03</span><h3>Publique</h3><p>Revise nome, medidas e materiais e compartilhe por link, QR Code ou no seu site.</p><p class="lx-fact">Web · QR · Realidade aumentada</p></li>
         </ol>
       </section>
 
       <section class="lx-sectors" id="setores" aria-labelledby="lx-sectors-h">
-        <div class="lx-sectors-head"><p class="lx-tag">Setores</p><h2 id="lx-sectors-h">Um modelo para cada produto físico.</h2></div>
+        <div class="lx-sectors-head" data-reveal-in><p class="lx-tag">Setores</p><h2 id="lx-sectors-h">Um modelo para cada produto físico.</h2></div>
         <div class="lx-sectors-body">
-          <div class="lx-table">
+          <div class="lx-table" data-reveal-in>
             <div class="lx-thead" aria-hidden="true"><span>Setor</span><span>O que o cliente vê</span></div>
             <div role="tablist" aria-label="Setores" aria-orientation="vertical" data-sector-tabs>
               ${SECTORS.map((x, i) => html`<button class="lx-row" type="button" role="tab" id="lx-tab-${x.key}" aria-controls="lx-sector-view" aria-selected="${i === 0 ? 'true' : 'false'}" tabindex="${i === 0 ? '0' : '-1'}" data-model="${x.model}?v=${ASSET_V}" data-orbit="${x.orbit}" data-label="${x.label}">
@@ -107,7 +129,7 @@ r.get('/', (req, res, next) => {
               </button>`)}
             </div>
           </div>
-          <div class="lx-sector-view" id="lx-sector-view" role="tabpanel" aria-labelledby="lx-tab-${first.key}">
+          <div class="lx-sector-view" id="lx-sector-view" role="tabpanel" aria-labelledby="lx-tab-${first.key}" data-reveal-in>
             <model-viewer class="lx-mv" data-sector-mv src="${first.model}?v=${ASSET_V}" alt="${first.label} em 3D. Arraste para girar." camera-controls disable-zoom auto-rotate rotation-per-second="18deg" interaction-prompt="none" camera-orbit="${first.orbit}" shadow-intensity="1" exposure="1.1" loading="lazy"></model-viewer>
             <p class="lx-sector-cap"><span data-sector-label>${first.label}</span><span>Arraste para girar</span></p>
           </div>
@@ -115,13 +137,42 @@ r.get('/', (req, res, next) => {
         <p class="lx-more">Também: produtos industriais · embalagens · equipamentos · brinquedos · ferramentas</p>
       </section>
 
+      <section class="lx-client" id="cliente" aria-labelledby="lx-client-h">
+        <div class="lx-client-copy" data-reveal-in>
+          <p class="lx-tag lx-tag-ink">Para o seu cliente</p>
+          <h2 id="lx-client-h">A página que o seu cliente abre. Sem app, sem cadastro.</h2>
+          <p class="lx-client-lead">Um link ou um QR Code — na mesa, na etiqueta, no catálogo. O produto gira, aproxima e, no celular, aparece no ambiente em tamanho real.</p>
+          <ul class="lx-client-facts">
+            <li>${icon('ar', 18)}<span><b>Realidade aumentada</b> no iPhone (Quick Look) e no Android (Scene Viewer), sem instalar nada.</span></li>
+            <li>${icon('ruler', 18)}<span><b>Tamanho real</b> quando as medidas do fabricante estão cadastradas.</span></li>
+            <li>${icon('globe', 18)}<span><b>No seu site</b> por iframe, com a sua marca e sem a nossa.</span></li>
+          </ul>
+          ${qr ? html`<div class="lx-qr"><span class="lx-qr-code" aria-label="QR Code para ${demoUrl}">${raw(qr)}</span><span class="lx-qr-text"><b>Aponte a câmera do celular</b><small>Abre ${hero.name} em 3D e em AR neste servidor.</small></span></div>` : ''}
+          ${ctaBar({ label: 'Abrir a página de exemplo', href: `/p/${hero.slug}`, cls: 'lx-bar-ink lx-client-cta' })}
+        </div>
+        <div class="lx-phone-wrap" data-reveal-in>
+          <div class="lx-phone" role="img" aria-label="Página pública de ${hero.name} aberta num celular">
+            <span class="lx-phone-notch" aria-hidden="true"></span>
+            <iframe class="lx-phone-screen" src="/p/${hero.slug}?embed=1" title="Página pública de ${hero.name}" loading="lazy" tabindex="-1"></iframe>
+          </div>
+          <p class="lx-phone-cap">Página pública real · ${hero.name}</p>
+        </div>
+      </section>
+
       <section class="lx-final" aria-labelledby="lx-final-h">
         <p class="lx-tag lx-tag-ink">Comece agora</p>
-        <h2 id="lx-final-h">Seu primeiro produto em 3D ainda hoje.</h2>
+        <h2 id="lx-final-h" data-reveal-in>Seu primeiro produto em 3D ainda hoje.</h2>
         <div class="lx-final-row"><p>Trinta fotos com o celular. Nós cuidamos do resto.</p>${ctaBar({ label: 'Criar modelo 3D', href: '/studio/produtos/novo' })}</div>
       </section>
     </main>
-    <footer class="lx-foot"><span>Forma 3D · preview</span><a href="/entrar">Acesso ao painel de restaurantes (beta)</a></footer>` }));
+    <footer class="lx-foot">
+      <div class="lx-foot-grid">
+        <div class="lx-foot-brand">${brand('brand-dark')}<p>Produtos reais em 3D e realidade aumentada, a partir de fotos do celular.</p></div>
+        <nav aria-label="Produto"><b>Produto</b><a href="#como-funciona">Como funciona</a><a href="#setores">Setores</a><a href="/studio">Demonstração</a><a href="/p/${hero.slug}">Exemplo público</a></nav>
+        <nav aria-label="Acesso"><b>Acesso</b><a href="/entrar">Entrar</a><a href="/studio/produtos/novo">Criar modelo 3D</a><a href="/entrar">Painel de restaurantes (beta)</a></nav>
+      </div>
+      <div class="lx-foot-meta"><span>Forma 3D · preview</span><span>GLB · USDZ · AR</span></div>
+    </footer>` }));
 });
 
 // ---------- Dashboard ----------
@@ -145,7 +196,7 @@ r.get('/studio', (req, res) => {
   const pending = PRODUCTS.find((p) => PENDING.includes(p.status)) || null;
 
   res.send(shell({
-    title: 'Início', active: 'inicio', heading: `Olá, ${ACCOUNT.firstName}`, subheading: 'Aqui está o que mudou nos seus produtos.',
+    title: 'Início', active: 'inicio', heading: `Olá, ${ACCOUNT.firstName}`, subheading: 'Aqui está o que mudou nos seus produtos.', viewer: true,
     actions: button({ label: 'Novo produto', href: '/studio/produtos/novo', kind: 'primary', iconName: 'plus' }),
     body: html`
       <section class="block" aria-labelledby="h-resumo">
@@ -161,7 +212,7 @@ r.get('/studio', (req, res) => {
 
       ${pending ? html`
       <section class="resume" id="resume" aria-labelledby="h-retomar">
-        <span class="resume-media" aria-hidden="true">${illo(pending.illo)}</span>
+        <span class="resume-media" aria-hidden="true">${media(pending)}</span>
         <div class="resume-text">
           <p class="eyebrow" id="h-retomar">Continue de onde parou</p>
           <b>${pending.name}</b>
@@ -176,7 +227,7 @@ r.get('/studio', (req, res) => {
         <div class="section-head"><h2 id="h-recentes">Produtos recentes</h2><a class="link" href="/studio/produtos">Ver todos ${icon('arrow', 16)}</a></div>
         <ul class="plist" id="recent-list">
           ${recent.map((p) => productRow({
-            slug: p.slug, name: p.name, media: illo(p.illo), status: p.status, progress: p.progress || 0,
+            slug: p.slug, name: p.name, media: media(p), status: p.status, progress: p.progress || 0,
             meta: `${p.category} · atualizado em ${dateBR(p.updatedAt)}`,
             views: p.views ? `${fmt(p.views)} visualizações` : '',
             action: rowAction(p),
@@ -197,7 +248,7 @@ r.get('/studio/produtos', (req, res) => {
   const list = PRODUCTS.filter((p) => (!st || p.status === st) && (!q || [p.name, p.category, ...p.tags].join(' ').toLowerCase().includes(q)));
   const chips = Object.entries(STATUS).filter(([k]) => PRODUCTS.some((p) => p.status === k));
   res.send(shell({
-    title: 'Meus produtos', active: 'produtos', heading: 'Meus produtos', subheading: `${list.length} de ${PRODUCTS.length} produtos${q ? ` para “${q}”` : ''}`,
+    title: 'Meus produtos', active: 'produtos', heading: 'Meus produtos', subheading: `${list.length} de ${PRODUCTS.length} produtos${q ? ` para “${q}”` : ''}`, viewer: true,
     actions: button({ label: 'Novo produto', href: '/studio/produtos/novo', kind: 'primary', iconName: 'plus' }),
     body: html`
       <div class="filters-row" role="group" aria-label="Filtrar por status">
@@ -654,13 +705,55 @@ r.get('/studio/qr/:slug', async (req, res) => {
 });
 
 // ---------- Páginas de apoio (honestas: conteúdo mínimo, sem simular métricas inexistentes) ----------
+const FAQ = [
+  ['Quantas fotos preciso tirar?', 'Entre 20 e 300. A captura guiada mira 52 (três voltas: 24, 16 e 12 ângulos). Acima de 30 o resultado costuma ser bem melhor; acima de 100 o ganho é pequeno para objetos de mesa.'],
+  ['Qual é a melhor luz?', 'Luz difusa e constante: perto de uma janela sem sol direto, ou duas luminárias iguais. Sombras duras e reflexos viram "buracos" na textura. Não mude a luz nem o ambiente entre as voltas.'],
+  ['O produto é brilhante, metálico ou transparente. E agora?', 'Na revisão, marque a superfície como lisa, metálica ou transparente: o modelo vai para um algoritmo próprio para isso. Ajuda muito evitar janelas e telas refletidas e usar um fundo fosco.'],
+  ['Posso mover o produto em vez de andar ao redor dele?', 'Pode, com um fundo liso e sem detalhes (e a opção "Separar o produto do fundo" ligada). Com fundo cheio de detalhes, quem gira é você: o serviço usa o fundo para calcular as posições da câmera.'],
+  ['Por que a textura padrão é 2K e não 4K?', 'Um modelo 2K abre em 2–3 s em AR no celular; o 4K pesa três vezes mais e só acrescenta detalhe quando as fotos têm mais de 2000 px no lado maior. Você escolhe 4K em cada envio.'],
+  ['Como o cliente vê em realidade aumentada?', 'Pela página pública, no celular: iPhone abre no Quick Look e Android no Scene Viewer, sem instalar nada. Com as medidas do fabricante cadastradas, o produto aparece em tamanho real.'],
+  ['Posso colocar no meu site?', 'Sim: em Publicações há o código do iframe. A página leva a sua marca; a assinatura "Criado com Forma 3D" pode ser desligada em Estúdio.'],
+];
+const CONNECTORS = ['Shopify', 'WooCommerce', 'VTEX', 'Nuvemshop', 'Google Merchant', 'Catálogo CSV'];
 const SUPPORT = {
-  estatisticas: { title: 'Estatísticas', text: 'Visualizações por produto, aberturas em AR e origem dos acessos serão consolidadas quando a publicação real existir.', extra: () => html`<div class="stats-row">${PRODUCTS.filter((p) => p.status === 'published').map((p) => html`<div class="stat"><small>${p.name}</small><b>${fmt(p.views)}</b><span>visualizações · ${fmt(p.arViews)} em AR</span></div>`)}</div>` },
-  integracoes: { title: 'Integrações', text: 'Incorporação por iframe já está disponível em Publicações. Conectores para lojas e catálogos ficam para uma fase posterior.' },
-  ajuda: { title: 'Ajuda', text: 'Dúvidas sobre captura, processamento e publicação. No preview, use os requisitos de captura na tela “Capturar”.' },
+  estatisticas: {
+    title: 'Estatísticas', sub: 'Visualizações e aberturas em AR por produto publicado.',
+    body: () => html`
+      <section class="block" aria-labelledby="h-st">
+        <div class="section-head"><h2 id="h-st">Por produto</h2></div>
+        <div class="stats-row">${PRODUCTS.filter((p) => p.status === 'published').map((p) => html`<div class="stat"><span class="stat-media">${media(p)}</span><small>${p.name}</small><b>${fmt(p.views)}</b><span>visualizações · <strong>${fmt(p.arViews)}</strong> em AR (${Math.round(p.arViews / Math.max(1, p.views) * 100)}%)</span></div>`)}</div>
+        ${simNote('Os números vêm dos produtos de demonstração. Origem dos acessos, janela de 30 dias e tendências dependem de um histórico no backend, que ainda não existe.')}
+      </section>`,
+  },
+  integracoes: {
+    title: 'Integrações', sub: 'Leve o modelo para onde o seu cliente já está.',
+    body: () => html`
+      <section class="card" aria-labelledby="h-emb">
+        <div class="section-head"><h2 id="h-emb">Incorporar no seu site</h2><a class="link" href="/studio/publicacoes">Códigos por produto ${icon('arrow', 16)}</a></div>
+        <p class="lead-sm">Um iframe por produto. Funciona em qualquer site ou loja que aceite HTML; a realidade aumentada continua funcionando dentro dele.</p>
+        <pre class="code" tabindex="0"><code>&lt;iframe src="https://SEU-DOMINIO/p/caneca-origens" width="100%" height="560" loading="lazy" title="Caneca Origens em 3D" allow="xr-spatial-tracking"&gt;&lt;/iframe&gt;</code></pre>
+      </section>
+      <section class="card" aria-labelledby="h-con">
+        <div class="section-head"><h2 id="h-con">Conectores</h2></div>
+        <p class="lead-sm">Publicar o modelo direto na ficha do produto da sua loja fica para uma fase posterior. Enquanto isso, o iframe e o link funcionam em todas elas.</p>
+        <ul class="conn-list">${CONNECTORS.map((c) => html`<li><b>${c}</b><em>em breve</em></li>`)}</ul>
+      </section>`,
+  },
+  ajuda: {
+    title: 'Ajuda', sub: 'Captura, processamento e publicação, em respostas curtas.',
+    body: () => html`
+      <section class="card faq" aria-labelledby="h-faq">
+        <div class="section-head"><h2 id="h-faq">Perguntas frequentes</h2></div>
+        ${FAQ.map(([q, a], i) => html`<details class="faq-item" ${i === 0 ? raw('open') : ''}><summary>${q}${icon('chevron', 18)}</summary><p>${a}</p></details>`)}
+      </section>
+      <section class="card" aria-labelledby="h-cap">
+        <div class="section-head"><h2 id="h-cap">Checklist de captura</h2></div>
+        <ul class="checklist">${CAPTURE_TIPS.map((t) => html`<li>${icon('check', 16)}<span>${t}</span></li>`)}</ul>
+      </section>`,
+  },
 };
 for (const [key, s] of Object.entries(SUPPORT)) {
-  r.get(`/studio/${key}`, (req, res) => res.send(shell({ title: s.title, active: key, heading: s.title, body: html`<section class="card"><p class="lead-sm">${s.text}</p>${s.extra ? s.extra() : ''}</section>` })));
+  r.get(`/studio/${key}`, (req, res) => res.send(shell({ title: s.title, active: key, heading: s.title, subheading: s.sub, viewer: false, body: s.body() })));
 }
 
 // ---------- Página pública ----------
@@ -671,7 +764,8 @@ r.get('/p/:slug', loadProduct, (req, res) => {
   const p = req.product;
   const d = p.dimensions;
   const hasDims = [d.width, d.height, d.depth].some((v) => v !== '' && v != null);
-  res.send(doc({ title: p.name, viewer: true, cls: 'public', body: html`
+  const embed = String(req.query.embed || '') === '1'; // dentro do telefone da landing: sem cabeçalho de ações
+  res.send(doc({ title: p.name, viewer: true, cls: embed ? 'public is-embed' : 'public', body: html`
     <header class="pub-nav">
       <span class="pub-brand"><span class="pub-brand-mark" aria-hidden="true">${p.brand.slice(0, 1)}</span><span class="pub-brand-name">${p.brand}</span></span>
       ${button({ label: 'Compartilhar', kind: 'secondary', iconName: 'share', size: 'sm', attrs: 'data-share' })}

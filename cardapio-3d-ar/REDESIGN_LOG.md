@@ -597,3 +597,22 @@ padding/`::before` sem mudar o desenho; texto mono abaixo de 11,5 px subiu.
   `forma-scanner.test.js` forem migrados para os módulos atuais.
 - ZIP do KIRI ainda inteiro em memória (até 400 MB); fazer streaming para disco.
 - Sem dono por tarefa fora de produção (beta por convite); se o Studio abrir ao público, criar `owner_key`.
+
+---
+
+# Landing v2 e Studio v2 — design (16/10/2026)
+
+Pedido: deixar a landing e a plataforma excepcionais. Tudo o que entrou é o produto de verdade, não ilustração.
+
+**Landing**
+- Barra de navegação flutuante (fixa, escura e translúcida), igual sobre o hero e sobre as seções claras.
+- Passos "Como funciona" com a interface em miniatura: a faixa de 24 ângulos da captura com o render real da caneca, as cinco etapas reais do serviço de reconstrução e o link/formatos da publicação.
+- Nova seção **Para o seu cliente**: a página pública real (`/p/caneca-origens?embed=1`) dentro de um telefone, ao lado de um **QR Code gerado para este servidor** (aponte a câmera e abre em 3D/AR). No celular, vira um botão.
+- Rodapé em três colunas; revelação das seções no scroll (desligada com movimento reduzido ou sem JS).
+
+**Studio**
+- **Renders reais** dos modelos de demonstração (`public/posters/*.png`, PNG transparente gerado do GLB com o próprio `<model-viewer>`) nos cards, nas linhas da home, na retomada e nas estatísticas, no lugar das ilustrações planas.
+- **Girar ao passar o mouse**: o card carrega o `<model-viewer>` por cima do render e gira; só com mouse de verdade (`hover: hover`), nunca no toque.
+- Estatísticas, Integrações e Ajuda deixaram de ser placeholders: estatísticas com render e taxa de AR, integrações com o iframe e a lista honesta de conectores "em breve", ajuda com sete perguntas reais e o checklist de captura.
+- Página pública com o nome do produto em display.
+- Nenhuma rota tem overflow horizontal de 360 a 1280 px; 62/62 testes.

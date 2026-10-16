@@ -88,6 +88,12 @@ export function illo(kind, { mode = 'fill', stroke = '#B8F36B' } = {}) {
     ${draw(f)}</svg>`);
 }
 
+// Mídia do produto: o render do modelo real (`poster`, PNG com fundo transparente gerado do GLB) quando
+// existe; senão a ilustração. Em cards, `data-model` permite girar o modelo ao passar o mouse.
+export const media = (p, cls = '') => (p.poster
+  ? html`<img class="poster${cls ? ` ${cls}` : ''}" src="${p.poster}?v=${ASSET_V}" alt="" width="1200" height="900" loading="lazy" decoding="async">`
+  : illo(p.illo));
+
 // ---------- Pequenos componentes ----------
 export const statusPill = (key, extra = '') => {
   const s = STATUS[key] || STATUS.draft;
@@ -104,8 +110,8 @@ export const iconButton = ({ label, iconName, attrs = '', kind = 'ghost', cls = 
 
 export const productCard = (p) => html`
   <article class="pcard" data-status="${p.status}">
-    <a class="pcard-media" href="/studio/produtos/${p.slug}${p.status === 'processing' ? '/processando' : ''}" aria-label="Abrir ${p.name}">
-      ${illo(p.illo)}
+    <a class="pcard-media" href="/studio/produtos/${p.slug}${p.status === 'processing' ? '/processando' : ''}" aria-label="Abrir ${p.name}" ${p.model && p.poster ? raw(`data-model="${p.model}?v=${ASSET_V}" data-orbit="${p.cameraOrbit || ''}"`) : ''}>
+      ${media(p)}
       ${p.status === 'processing' ? html`<span class="pcard-progress" aria-hidden="true"><i style="width:${p.progress}%"></i></span>` : ''}
     </a>
     <div class="pcard-body">
